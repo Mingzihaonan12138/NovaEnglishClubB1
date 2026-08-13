@@ -19,13 +19,44 @@ service cloud.firestore {
       return isSignedIn() && (request.auth.token.email.lower() == 'xuanyu.diao@gmail.com' || request.auth.token.email.lower() == 'aitonghan02@gmail.com');
     }
 
+    // Audio no longer lives on this document (see /recordingAudio), so audioUrl
+    // is optional — legacy documents from the Firebase Storage era still have it.
     function isValidRecording(data) {
-      return data.keys().hasAll(['studentId', 'questionId', 'audioUrl', 'createdAt', 'status']) &&
+      return data.keys().hasAll(['studentId', 'questionId', 'createdAt', 'status']) &&
              data.studentId is string &&
              data.questionId is string &&
-             data.audioUrl is string &&
-             data.audioUrl.size() < 2048 &&
+             (!data.keys().hasAny(['audioUrl']) || (data.audioUrl is string && data.audioUrl.size() < 2048)) &&
              data.status in ['pending', 'reviewed'];
+    }
+
+    // --- Access control -----------------------------------------------------
+    // Without this, anyone with a Google account could sign in, get a profile
+    // created for them, and start consuming the project's quota. The teacher
+    // adds a student by writing /allowlist/<their email>; only then can that
+    // account create its own /users profile.
+    //
+    // Students who already have a /users document keep working untouched, so
+    // turning this on does not lock out the current class.
+    function isAllowlisted() {
+      return isSignedIn() &&
+             request.auth.token.email != null &&
+             exists(/databases/$(database)/documents/allowlist/$(request.auth.token.email.lower()));
+    }
+
+    // Either already has a profile, or has just been allowlisted and is about to
+    // get one. Accepting both means adding a student to the allowlist admits
+    // them immediately, with no window where they are signed in but blocked.
+    function isEnrolled() {
+      return isSignedIn() &&
+             (exists(/databases/$(database)/documents/users/$(request.auth.uid)) || isAllowlisted());
+    }
+
+    function isValidRecordingAudio(data) {
+      return data.keys().hasAll(['studentId', 'audioBase64', 'mimeType']) &&
+             data.studentId is string &&
+             data.audioBase64 is string &&
+             data.audioBase64.size() <= 700000 &&
+             data.mimeType is string;
     }
 
     function isValidListeningMark(data) {
@@ -37,10 +68,27 @@ service cloud.firestore {
              data.marked is bool;
     }
 
+    // Only the teacher reads this — it is a list of student emails. The
+    // isAllowlisted() check above still works for everyone, because exists()
+    // inside a rule is evaluated with full access, not the caller's.
+    match /allowlist/{email} {
+      allow read, write: if isV1Admin();
+    }
+
+    // The audio for one recording, kept out of /recordings so that listing
+    // submissions stays cheap. Immutable once written: a student may create and
+    // delete their own, but not rewrite someone else's.
+    match /recordingAudio/{recordingId} {
+      allow create: if isEnrolled() && isValidRecordingAudio(request.resource.data)
+                    && request.resource.data.studentId == request.auth.uid;
+      allow read: if isSignedIn() && (resource.data.studentId == request.auth.uid || isV1Admin());
+      allow delete: if isV1Admin() || (isSignedIn() && resource.data.studentId == request.auth.uid);
+    }
+
     match /recordings/{recordingId} {
-      allow create: if isSignedIn() && isValidRecording(request.resource.data) && request.resource.data.studentId == request.auth.uid;
+      allow create: if isEnrolled() && isValidRecording(request.resource.data) && request.resource.data.studentId == request.auth.uid;
       allow read: if isOwner(resource.data.studentId) || isV1Admin();
-      allow update: if isV1Admin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['teacherFeedback', 'status', 'studentId', 'oldStudentId', 'updatedAt', 'audioBase64']);
+      allow update: if isV1Admin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['teacherFeedback', 'status', 'studentId', 'oldStudentId', 'updatedAt', 'audioBase64', 'hasAudio']);
       allow delete: if isV1Admin();
       allow list: if isSignedIn() && (resource.data.studentId == request.auth.uid || isV1Admin());
     }
@@ -67,8 +115,24 @@ service cloud.firestore {
       allow write: if isV1Admin();
     }
 
+    // Shared listening bank. Nothing here is personal, so every enrolled
+    // student may read it; only the teacher writes it.
+    match /listeningQuestions/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if isV1Admin();
+    }
+
+    // Which of those a given student may practise. Deliberately NOT a field on
+    // users/{uid}, because students can write their own user document and would
+    // then be able to assign themselves material.
+    match /listeningAssignments/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isV1Admin());
+      allow write: if isV1Admin();
+      allow list: if isV1Admin();
+    }
+
     match /listeningProgress/{progressId} {
-      allow create: if isSignedIn() && request.resource.data.studentId == request.auth.uid;
+      allow create: if isEnrolled() && request.resource.data.studentId == request.auth.uid;
       allow read: if isSignedIn() && (resource.data.studentId == request.auth.uid || isV1Admin());
       allow update: if isSignedIn() && request.resource.data.studentId == request.auth.uid && resource.data.studentId == request.auth.uid;
       allow delete: if isSignedIn() && resource.data.studentId == request.auth.uid;
@@ -76,7 +140,7 @@ service cloud.firestore {
     }
 
     match /listeningMarked/{markedId} {
-      allow create: if isSignedIn() && isValidListeningMark(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      allow create: if isEnrolled() && isValidListeningMark(request.resource.data) && request.resource.data.userId == request.auth.uid;
       allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isV1Admin());
       allow update: if isSignedIn() && isValidListeningMark(request.resource.data) && request.resource.data.userId == request.auth.uid && resource.data.userId == request.auth.uid;
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
@@ -85,7 +149,11 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isV1Admin());
-      allow write: if isV1Admin() || (isSignedIn() && request.auth.uid == uid);
+      // Creating a profile is the moment an account becomes a student, so it is
+      // gated on the allowlist. Updating an existing profile is not, which is
+      // what keeps the current class working after this rule goes live.
+      allow create: if isV1Admin() || (isSignedIn() && request.auth.uid == uid && isAllowlisted());
+      allow update, delete: if isV1Admin() || (isSignedIn() && request.auth.uid == uid);
       allow list: if isV1Admin();
     }
 

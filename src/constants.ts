@@ -7,9 +7,16 @@ export interface QuestionAnswer {
   id: string;
   topic: string;
   question: string;
+  /** Empty when the teacher has not yet written this student's own answer. */
   suggestedAnswer: string;
   audioUrl: string;
   chineseMeaning?: string;
+  /**
+   * Which half of the exam this belongs to. Part 1 topics are chosen by the
+   * student and are personal; Part 2 subject areas are fixed by Trinity and
+   * shared, with only the answers being personal.
+   */
+  section?: 'Part 1' | 'Part 2';
 }
 
 export const TRINITY_B1_TOPICS = [

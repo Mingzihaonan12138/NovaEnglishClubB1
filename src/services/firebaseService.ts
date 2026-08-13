@@ -1,31 +1,36 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User } from 'firebase/auth';
 import { 
-  getFirestore, collection, addDoc, query, where, getDocs, updateDoc, doc, 
-  orderBy, onSnapshot, serverTimestamp, getDocFromServer, setDoc, deleteDoc, 
+  getFirestore, collection, addDoc, query, where, getDocs, getDoc, updateDoc, doc,
+  orderBy, onSnapshot, serverTimestamp, setDoc, deleteDoc,
   limit, startAfter, QueryDocumentSnapshot, DocumentData, deleteField 
 } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
-export const storage = getStorage(app);
 
+// NOTE: no getStorage() here. This project has no Firebase Storage bucket
+// (verified: the bucket named in firebase-applet-config.json does not exist),
+// so student recordings live in Firestore instead — see saveRecordingAudio below.
+// Always the (default) database — deliberately NOT firebaseConfig.firestoreDatabaseId.
+// AI Studio keeps regenerating that field to point at a private `ai-studio-*`
+// database that has no security rules published on it, which makes every read and
+// write fail with "Missing or insufficient permissions" while login and the static
+// question bank keep working. Hardcoding it here makes those regenerations harmless.
+export const db = getFirestore(app);
 export const googleProvider = new GoogleAuthProvider();
 
-// Test connection CRITICAL
-async function testConnection() {
-  try {
-    await getDocFromServer(doc(db, 'test', 'connection'));
-  } catch (error) {
-    if(error instanceof Error && error.message.includes('the client is offline')) {
-      console.error("Please check your Firebase configuration.");
-    }
-  }
+/**
+ * Headers for calls to our own Express API (/api/*). The server verifies this
+ * ID token before spending any Gemini quota.
+ */
+export async function apiHeaders(): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = await auth.currentUser?.getIdToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  return headers;
 }
-testConnection();
 
 export enum OperationType {
   CREATE = 'create',
@@ -81,8 +86,9 @@ export interface Recording {
   questionId: string;
   questionText: string;
   topic: string;
-  audioUrl?: string; // Optional because legacy might use audioBase64
-  audioBase64?: string; // Support for legacy or direct base64
+  hasAudio?: boolean; // audio lives in the recordingAudio collection under the same id
+  audioUrl?: string; // legacy: Firebase Storage download URL
+  audioBase64?: string; // legacy: audio inlined into this document
   mimeType?: string; // Crucial for correct playback of base64
   duration?: number; // In seconds
   createdAt: any;
@@ -90,28 +96,76 @@ export interface Recording {
   status: 'pending' | 'reviewed';
 }
 
-export async function uploadAudio(blob: Blob, path: string): Promise<string> {
-  const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, blob);
-  return await getDownloadURL(storageRef);
-}
+/**
+ * Firestore caps a single document at 1 MiB. Audio is stored as base64, which
+ * inflates the raw bytes by ~33%, so we cap the encoded string well under that
+ * to leave room for the other fields. At 24 kbps mono opus this is ~2.9 minutes
+ * of speech — far more than a Trinity B1 answer needs.
+ */
+export const MAX_INLINE_B64 = 700_000;
 
+/**
+ * Recordings are split across two collections on purpose:
+ *
+ *   recordings/{id}      metadata only — small, so listing a student's whole
+ *                        history costs almost nothing
+ *   recordingAudio/{id}  the base64 audio, fetched only when someone presses play
+ *
+ * Keeping the audio out of the list documents is what makes this scale to more
+ * students: the teacher dashboard can page through hundreds of submissions
+ * without downloading a single byte of audio.
+ */
 export async function saveRecording(recording: Omit<Recording, 'id' | 'createdAt'> & { id?: string; createdAt?: any }) {
   try {
-    const { id, ...rest } = recording;
+    const { id, audioBase64, ...rest } = recording;
     const data = {
       ...rest,
       createdAt: recording.createdAt || serverTimestamp(),
     };
-    
+
     if (id) {
-      // Use setDoc if id is provided
       await setDoc(doc(db, 'recordings', id), data, { merge: true });
-    } else {
-      await addDoc(collection(db, 'recordings'), data);
+      return id;
     }
+    const created = await addDoc(collection(db, 'recordings'), data);
+    return created.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, 'recordings');
+    return null;
+  }
+}
+
+export async function saveRecordingAudio(
+  recordingId: string,
+  studentId: string,
+  audioBase64: string,
+  mimeType: string
+) {
+  try {
+    await setDoc(doc(db, 'recordingAudio', recordingId), {
+      studentId,
+      audioBase64,
+      mimeType,
+      createdAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `recordingAudio/${recordingId}`);
+  }
+}
+
+/** Fetches the audio for one recording. Returns null when there is none. */
+export async function loadRecordingAudio(
+  recordingId: string
+): Promise<{ audioBase64: string; mimeType: string } | null> {
+  try {
+    const snap = await getDoc(doc(db, 'recordingAudio', recordingId));
+    if (!snap.exists()) return null;
+    const data = snap.data();
+    if (!data.audioBase64) return null;
+    return { audioBase64: data.audioBase64, mimeType: data.mimeType || 'audio/webm' };
+  } catch (error) {
+    handleFirestoreError(error, OperationType.GET, `recordingAudio/${recordingId}`);
+    return null;
   }
 }
 
@@ -178,12 +232,16 @@ export async function updateFeedback(recordingId: string, feedback: string) {
   }
 }
 
+/** Frees the space one recording takes up, keeping its metadata and feedback. */
 export async function deleteAudioBase64(recordingId: string) {
   try {
-    const ref = doc(db, 'recordings', recordingId);
-    await updateDoc(ref, {
-      audioBase64: deleteField()
+    // Legacy documents inlined the audio into the recording itself.
+    await updateDoc(doc(db, 'recordings', recordingId), {
+      audioBase64: deleteField(),
+      hasAudio: false,
     });
+    // Current documents keep it in its own collection.
+    await deleteDoc(doc(db, 'recordingAudio', recordingId));
   } catch (error) {
     handleFirestoreError(error, OperationType.UPDATE, `recordings/${recordingId}`);
   }
@@ -268,6 +326,30 @@ export interface UserProfile {
   isInvited?: boolean;
 }
 
+/**
+ * The allowlist is what actually admits a student: firestore.rules only lets an
+ * account create its own /users profile if its email has an entry here. The
+ * document id IS the lowercased email, because security rules can look a
+ * document up by path but cannot run a query.
+ */
+export async function addToAllowlist(email: string) {
+  const key = email.trim().toLowerCase();
+  try {
+    await setDoc(doc(db, 'allowlist', key), { email: key, addedAt: serverTimestamp() });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `allowlist/${key}`);
+  }
+}
+
+export async function removeFromAllowlist(email: string) {
+  const key = email.trim().toLowerCase();
+  try {
+    await deleteDoc(doc(db, 'allowlist', key));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `allowlist/${key}`);
+  }
+}
+
 export async function saveUserProfile(profile: Omit<UserProfile, 'lastActive'>) {
   try {
     // If we have a UID, update it. If not, we might be pre-inviting by email.
@@ -289,43 +371,50 @@ export async function saveUserProfile(profile: Omit<UserProfile, 'lastActive'>) 
   }
 }
 
-// Bind pre-invited user on first login
-export async function bindUserOnLogin(firebaseUser: User) {
+/**
+ * Creates or refreshes the signed-in user's own profile at users/{uid}.
+ *
+ * This used to start by querying the whole users collection to find a matching
+ * invite. Security rules only allow an admin to list that collection, so for a
+ * student the very first call was denied and the profile was never written —
+ * every student was running without one. Writing straight to their own document
+ * needs no query and is exactly what the rules permit.
+ *
+ * Returns false when the write was refused, which means the account is not on
+ * the teacher's allowlist.
+ */
+export async function bindUserOnLogin(firebaseUser: User): Promise<boolean> {
   try {
-    const q = query(collection(db, 'users'), where('email', '==', firebaseUser.email));
-    const snap = await getDocs(q);
-    
-    if (!snap.empty) {
-      const existingDoc = snap.docs[0];
-      const data = existingDoc.data();
-      
-      // If the email matches but the document was created via "Invite" (doc ID is auto, lacks UID field or uses different ID)
-      // We should ideally use the UID as the document ID for consistency.
-      if (existingDoc.id !== firebaseUser.uid) {
-        // Move the data to the correct UID path
-        const newDocRef = doc(db, 'users', firebaseUser.uid);
-        await setDoc(newDocRef, {
-          ...data,
-          uid: firebaseUser.uid,
-          displayName: firebaseUser.displayName || data.displayName || "",
-          isInvited: false, // Now officially registered
-          lastActive: serverTimestamp()
-        });
-        // Delete old entry
-        await deleteDoc(existingDoc.ref);
-      }
-    } else {
-      // Standard registration
-      await saveUserProfile({
+    await setDoc(
+      doc(db, 'users', firebaseUser.uid),
+      {
         uid: firebaseUser.uid,
-        email: firebaseUser.email || "",
+        email: (firebaseUser.email || "").toLowerCase(),
         displayName: firebaseUser.displayName || "",
-        isInvited: false
-      });
-    }
+        isInvited: false,
+        lastActive: serverTimestamp(),
+      },
+      { merge: true }
+    );
+    return true;
   } catch (error) {
-    console.error("Binding error:", error);
+    console.error("Binding error (account may not be on the allowlist):", error);
+    return false;
   }
+}
+
+export interface AllowlistEntry {
+  email: string;
+  addedAt?: any;
+}
+
+export function subscribeToAllowlist(callback: (entries: AllowlistEntry[]) => void) {
+  return onSnapshot(collection(db, 'allowlist'), (snapshot) => {
+    callback(snapshot.docs.map(d => ({ email: d.id, ...d.data() } as AllowlistEntry)));
+  }, () => {
+    // Students cannot list the allowlist; that is fine, only the teacher needs it.
+    callback([]);
+  });
 }
 
 export function subscribeToAllUsers(callback: (users: UserProfile[]) => void) {
@@ -433,6 +522,94 @@ export function subscribeToListeningMetadata(callback: (metaList: ListeningMetad
     callback(metaList);
   }, (error) => {
     handleFirestoreError(error, OperationType.LIST, 'listeningMetadata');
+  });
+}
+
+/**
+ * The listening bank is separate from the speaking material on purpose.
+ *
+ * Speaking questions are the student's own life (Part 1) or their own answers
+ * to the fixed subject areas (Part 2). Listening questions only train the ear,
+ * carry nothing personal, and are expensive for the teacher to prepare, so one
+ * shared bank is reused across students.
+ *
+ * Who may practise what is kept in listeningAssignments, NOT on the user
+ * document: a student can write their own users/{uid} doc, so an assignment
+ * field living there would be self-serviceable.
+ */
+export interface ListeningQuestion {
+  id?: string;
+  text: string;
+  chineseMeaning?: string;
+  keywords?: string;
+  questionType?: string;
+  slowAudioUrl?: string;
+  normalAudioUrl?: string;
+  createdAt?: any;
+}
+
+export async function saveListeningQuestion(q: ListeningQuestion) {
+  try {
+    if (q.id) {
+      const { id, ...rest } = q;
+      await setDoc(doc(db, 'listeningQuestions', id), rest, { merge: true });
+      return id;
+    }
+    const created = await addDoc(collection(db, 'listeningQuestions'), {
+      ...q,
+      createdAt: serverTimestamp(),
+    });
+    return created.id;
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, 'listeningQuestions');
+    return null;
+  }
+}
+
+export async function deleteListeningQuestion(questionId: string) {
+  try {
+    await deleteDoc(doc(db, 'listeningQuestions', questionId));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `listeningQuestions/${questionId}`);
+  }
+}
+
+export function subscribeToListeningQuestions(callback: (qs: ListeningQuestion[]) => void) {
+  return onSnapshot(collection(db, 'listeningQuestions'), (snapshot) => {
+    callback(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ListeningQuestion)));
+  }, (error) => {
+    handleFirestoreError(error, OperationType.LIST, 'listeningQuestions');
+  });
+}
+
+export interface ListeningAssignment {
+  userId: string;
+  questionIds: string[];
+  updatedAt?: any;
+}
+
+/** Teacher only. Replaces the whole set a student may practise. */
+export async function setListeningAssignment(userId: string, questionIds: string[]) {
+  try {
+    await setDoc(doc(db, 'listeningAssignments', userId), {
+      userId,
+      questionIds,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `listeningAssignments/${userId}`);
+  }
+}
+
+export function subscribeToListeningAssignment(
+  userId: string,
+  callback: (questionIds: string[]) => void
+) {
+  return onSnapshot(doc(db, 'listeningAssignments', userId), (snap) => {
+    callback(snap.exists() ? (snap.data().questionIds || []) : []);
+  }, () => {
+    // No assignment yet is a normal state, not an error worth shouting about.
+    callback([]);
   });
 }
 

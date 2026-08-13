@@ -3,7 +3,7 @@ import {
   Mic, Square, Volume2, Play, Pause, CheckCircle2, RefreshCcw, BookOpen, 
   Settings, X, Trash2, Save, LogIn, LogOut, User, MessageSquare,
   Plus, Search, Users, FileText, Download, Copy, ChevronRight,
-  AlertCircle, Upload, Wand2, Loader2
+  AlertCircle, Upload, Wand2, Loader2, Headphones
 } from 'lucide-react';
 
 import { motion, AnimatePresence } from 'motion/react';
@@ -17,19 +17,36 @@ import {
   subscribeToUserTopics, subscribeToPersonalizedConversations,
   saveUserProfile, subscribeToAllUsers, UserProfile,
   subscribeToGlobalTopics, saveGlobalTopic, deleteGlobalTopic, GlobalTopic,
-  bindUserOnLogin, cloneStudentData, db, uploadAudio, fetchPaginatedRecordings,
-  deleteAudioBase64,
+  bindUserOnLogin, cloneStudentData, db, fetchPaginatedRecordings,
+  deleteAudioBase64, saveRecordingAudio, loadRecordingAudio, MAX_INLINE_B64,
+  addToAllowlist, subscribeToAllowlist, AllowlistEntry,
   ListeningMetadata, ListeningProgress, saveListeningMetadata,
   subscribeToListeningMetadata, saveListeningProgress,
   subscribeToStudentListeningProgress,
   ListeningMarked, saveListeningMark,
-  subscribeToStudentListeningMarks, subscribeToAllListeningMarks
+  subscribeToStudentListeningMarks, subscribeToAllListeningMarks,
+  ListeningQuestion, subscribeToListeningQuestions, subscribeToListeningAssignment,
+  apiHeaders
 } from './services/firebaseService';
 import ListeningDrill from './components/ListeningDrill';
 import ListeningSetupPanel from './components/ListeningSetupPanel';
-import Mascot from './components/Mascot';
+import Mascot, { StarMascot } from './components/Mascot';
+import PracticeDeck, { DeckCardState } from './components/PracticeDeck';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocumentSnapshot, DocumentData, where } from 'firebase/firestore';
+
+/**
+ * One colour per deck, so a card back is recognisable before it is turned over.
+ * Derived from the topic name so a newly added topic gets a stable colour with
+ * no extra configuration. The colour only ever appears on card backs and deck
+ * covers, never in the answering view.
+ */
+const DECK_COLOURS = ['#455da3', '#7a8c4e', '#b4693a', '#6d7f96', '#8a6aa1', '#a8794e'];
+function deckColour(topic: string): string {
+  let h = 0;
+  for (let i = 0; i < topic.length; i++) h = (h * 31 + topic.charCodeAt(i)) >>> 0;
+  return DECK_COLOURS[h % DECK_COLOURS.length];
+}
 
 export default function App() {
   const [selectedTopic, setSelectedTopic] = useState<string>(TRINITY_B1_TOPICS[0]);
@@ -52,6 +69,7 @@ export default function App() {
   const [userTopics, setUserTopics] = useState<UserTopic[]>([]);
   const [userConvs, setUserConvs] = useState<PersonalizedConversation[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
+  const [allowlist, setAllowlist] = useState<AllowlistEntry[]>([]);
   const [globalTopics, setGlobalTopics] = useState<GlobalTopic[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [studentSearch, setStudentSearch] = useState("");
@@ -140,16 +158,28 @@ export default function App() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
 
   // New Listening Drill related states
+  const [listeningQuestions, setListeningQuestions] = useState<ListeningQuestion[]>([]);
+  const [assignedListeningIds, setAssignedListeningIds] = useState<string[]>([]);
   const [listeningMetadata, setListeningMetadata] = useState<ListeningMetadata[]>([]);
   const [listeningProgress, setListeningProgress] = useState<ListeningProgress[]>([]);
   const [listeningMarks, setListeningMarks] = useState<ListeningMarked[]>([]);
   const [activeModule, setActiveModule] = useState<'listening' | 'speaking' | null>(null);
+  /** Which Part 1 topic is open as a deck, if any. */
+  const [activeDeck, setActiveDeck] = useState<string | null>(null);
 
   const [showImportModal, setShowImportModal] = useState(false);
   const [importType, setImportType] = useState<'part1' | 'part2'>('part1');
   const [importJson, setImportJson] = useState("");
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importError, setImportError] = useState("");
+
+  // Audio is fetched per recording on first play; keep it around so replaying
+  // the same submission doesn't cost another Firestore read.
+  const [loadingAudioId, setLoadingAudioId] = useState<string | null>(null);
+  const audioCacheRef = useRef<Record<string, string>>({});
+
+  /** The card that was on screen when recording started. See handleSave. */
+  const recordingQuestionRef = useRef<QuestionAnswer | null>(null);
 
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -180,13 +210,18 @@ export default function App() {
     let unsubscribeTopics: any;
     let unsubscribeConvs: any;
     let unsubscribeUsers: any;
+    let unsubscribeAllowlist: any;
     let unsubscribeGlobal: any;
     let unsubscribeListeningMeta: any;
+    let unsubscribeListeningBank: any;
+    let unsubscribeListeningAssign: any;
     let unsubscribeListeningProg: any;
     let unsubscribeListeningMarks: any;
 
     unsubscribeGlobal = subscribeToGlobalTopics((data) => setGlobalTopics(data));
     unsubscribeListeningMeta = subscribeToListeningMetadata((data) => setListeningMetadata(data));
+    unsubscribeListeningBank = subscribeToListeningQuestions((data) => setListeningQuestions(data));
+    unsubscribeListeningAssign = subscribeToListeningAssignment(user.uid, (ids) => setAssignedListeningIds(ids));
 
     if (user) {
       unsubscribeListeningProg = subscribeToStudentListeningProgress(user.uid, (data) => setListeningProgress(data));
@@ -209,7 +244,8 @@ export default function App() {
       initialFetch();
 
       unsubscribeUsers = subscribeToAllUsers((data) => setAllUsers(data));
-      
+      unsubscribeAllowlist = subscribeToAllowlist((data) => setAllowlist(data));
+
       if (selectedStudentId) {
         unsubscribeTopics = subscribeToUserTopics(selectedStudentId, (data) => setUserTopics(data));
         unsubscribeConvs = subscribeToPersonalizedConversations(selectedStudentId, (data) => setUserConvs(data));
@@ -225,66 +261,77 @@ export default function App() {
       unsubscribeTopics && unsubscribeTopics();
       unsubscribeConvs && unsubscribeConvs();
       unsubscribeUsers && unsubscribeUsers();
+      unsubscribeAllowlist && unsubscribeAllowlist();
       unsubscribeGlobal && unsubscribeGlobal();
       unsubscribeListeningMeta && unsubscribeListeningMeta();
+      unsubscribeListeningBank && unsubscribeListeningBank();
+      unsubscribeListeningAssign && unsubscribeListeningAssign();
       unsubscribeListeningProg && unsubscribeListeningProg();
       unsubscribeListeningMarks && unsubscribeListeningMarks();
     };
   }, [user, isAdmin, selectedStudentId]);
 
-  // Content Resolution Logic: prioritize Firestore, fallback to static
+  /**
+   * Builds the question list this signed-in student is allowed to see.
+   *
+   * The exam has two parts and they are sourced differently:
+   *
+   *   Part 1  the five topics the student chose with their teacher. These are
+   *           somebody's actual life, so they come ONLY from that student's own
+   *           userTopics documents. Never from a shared bank.
+   *
+   *   Part 2  the fixed Trinity subject areas. The questions are the same for
+   *           everyone, so they come from globalTopics, but the model answer is
+   *           personal and comes ONLY from that student's userConversations.
+   *           With no personal answer we show none — showing the shared one
+   *           would hand this student another student's life.
+   *
+   * B1_QUESTIONS in constants.ts is one specific student's prepared material.
+   * It is demo content for the teacher's own account, never student-facing.
+   */
   const getDisplayQuestions = () => {
-    // 1. Get Base Questions from GlobalTopics or fallback to constants
-    const baseQuestions: QuestionAnswer[] = [];
-    
-    if (globalTopics.length > 0) {
-      const processedTopicNames = new Set<string>();
-      globalTopics.forEach(gt => {
-        const lowerTopic = gt.topicName.trim().toLowerCase();
-        if (processedTopicNames.has(lowerTopic)) return;
-        processedTopicNames.add(lowerTopic);
-
-        gt.questions.forEach(q => {
-          baseQuestions.push({
-            ...q,
-            topic: gt.topicName,
-            audioUrl: `/audio/${q.id}.wav`
-          });
-        });
+    // Part 1 — strictly per-student.
+    const part1: QuestionAnswer[] = [];
+    userTopics.forEach(t => {
+      t.questions.forEach(q => {
+        part1.push({
+          ...q,
+          topic: t.topicName,
+          section: 'Part 1',
+          audioUrl: `/audio/${q.id}.wav`,
+        } as QuestionAnswer);
       });
-    } else {
-      baseQuestions.push(...B1_QUESTIONS);
-    }
-
-    // De-duplicate baseQuestions by ID first to avoid base-level duplicates
-    const baseMap = new Map<string, QuestionAnswer>();
-    baseQuestions.forEach(q => {
-      if (!baseMap.has(q.id)) {
-        baseMap.set(q.id, q);
-      }
     });
-    const uniqueBase = Array.from(baseMap.values());
 
-    // 2. Apply Customizations
-    const customizedList = uniqueBase.map(q => {
-      // Part 1: Full customization from userTopics (if topic selected matches)
-      const customTopic = userTopics.find(t => t.topicName === q.topic);
-      if (customTopic) {
-        const customQ = customTopic.questions.find(cq => cq.id === q.id);
-        if (customQ) return { ...q, question: customQ.question, suggestedAnswer: customQ.suggestedAnswer };
-      }
+    // Part 2 — shared questions, personal answers.
+    const part2: QuestionAnswer[] = [];
+    const seenTopics = new Set<string>();
+    globalTopics.forEach(gt => {
+      const key = gt.topicName.trim().toLowerCase();
+      if (seenTopics.has(key)) return;
+      seenTopics.add(key);
 
-      // Part 2: Personalized Answer & Question (from userConvs)
-      const userConv = userConvs.find(c => c.topicName === q.topic);
-      if (userConv) {
-        let updatedQ = { ...q };
-        if (userConv.answers[q.id]) updatedQ.suggestedAnswer = userConv.answers[q.id];
-        if (userConv.questions?.[q.id]) updatedQ.question = userConv.questions[q.id];
-        return updatedQ;
-      }
-
-      return q;
+      const conv = userConvs.find(c => c.topicName === gt.topicName);
+      gt.questions.forEach(q => {
+        part2.push({
+          ...q,
+          topic: gt.topicName,
+          section: gt.section || 'Part 2',
+          // The student's own wording of the question, if the teacher wrote one.
+          question: conv?.questions?.[q.id] || q.question,
+          // Their own answer, or nothing at all.
+          suggestedAnswer: conv?.answers?.[q.id] || '',
+          audioUrl: `/audio/${q.id}.wav`,
+        } as QuestionAnswer);
+      });
     });
+
+    // The teacher sees the bundled sample material so the app is not empty
+    // while there are no students set up yet.
+    const customizedList =
+      part1.length === 0 && part2.length === 0 && isAdmin
+        ? B1_QUESTIONS
+        : [...part1, ...part2];
 
     // 3. Final visual and functional de-duplication: filter out questions that resolve to identical texts
     // to prevent students from having repetitive items ("Next" going to what appears as the same question)
@@ -303,6 +350,102 @@ export default function App() {
   };
 
   const displayQuestions = getDisplayQuestions();
+
+  /**
+   * Everything the deck needs to weight a draw, gathered from data the app
+   * already keeps: when the student last recorded an answer, whether they
+   * flagged the card, and the keywords the teacher wrote for it.
+   */
+  const deckCardState: Record<string, DeckCardState> = (() => {
+    const map: Record<string, DeckCardState> = {};
+    const at = (v: any) =>
+      !v ? 0
+      : typeof v.toMillis === 'function' ? v.toMillis()
+      : v instanceof Date ? v.getTime()
+      : typeof v === 'number' ? v
+      : typeof v === 'object' && v.seconds ? v.seconds * 1000
+      : 0;
+
+    recordings.forEach(r => {
+      const ms = at(r.createdAt);
+      const prev = map[r.questionId] || {};
+      if (!prev.lastPractisedAt || ms > prev.lastPractisedAt) {
+        map[r.questionId] = { ...prev, lastPractisedAt: ms };
+      }
+      if (r.teacherFeedback && r.status === 'reviewed') {
+        map[r.questionId] = { ...map[r.questionId], feedback: r.teacherFeedback };
+      }
+    });
+    listeningMarks.forEach(m => {
+      if (m.marked) map[m.questionId] = { ...(map[m.questionId] || {}), marked: true };
+    });
+    listeningMetadata.forEach(m => {
+      if (m.keywords) map[m.id] = { ...(map[m.id] || {}), keywords: m.keywords };
+    });
+    return map;
+  })();
+
+  const deckQuestions = activeDeck
+    ? displayQuestions.filter(q => q.topic === activeDeck)
+    : [];
+
+  /** One deck per Part 1 topic, with just enough state for the cover. */
+  const part1Decks = (() => {
+    const byTopic = new Map<string, QuestionAnswer[]>();
+    displayQuestions
+      .filter(q => q.section === 'Part 1')
+      .forEach(q => {
+        const list = byTopic.get(q.topic) || [];
+        list.push(q);
+        byTopic.set(q.topic, list);
+      });
+    return Array.from(byTopic.entries()).map(([topic, qs]) => ({
+      topic,
+      total: qs.length,
+      fresh: qs.filter(q => !deckCardState[q.id]?.lastPractisedAt).length,
+    }));
+  })();
+
+  const startRecordingFor = (q: QuestionAnswer) => {
+    setCurrentQuestion(q);
+    recordingQuestionRef.current = q;
+    startRecording();
+  };
+
+  const toggleMark = async (q: QuestionAnswer) => {
+    if (!user) return;
+    const now = deckCardState[q.id]?.marked === true;
+    await saveListeningMark({
+      userId: user.uid,
+      studentEmail: user.email || 'unknown',
+      questionId: q.id,
+      topic: q.topic,
+      marked: !now,
+    });
+  };
+
+  /**
+   * What this student may practise in the listening drill: the shared bank
+   * narrowed to what the teacher assigned them. The drill component speaks
+   * QuestionAnswer, so the bank is adapted to that shape here rather than
+   * reworking 2,600 lines of drill UI.
+   *
+   * The teacher sees the whole bank so they can try any item out.
+   */
+  const listeningDrillQuestions: QuestionAnswer[] = (() => {
+    const allowed = isAdmin
+      ? listeningQuestions
+      : listeningQuestions.filter(q => q.id && assignedListeningIds.includes(q.id));
+
+    return allowed.map(q => ({
+      id: q.id!,
+      topic: q.questionType || 'Listening',
+      question: q.text,
+      suggestedAnswer: '',
+      audioUrl: q.normalAudioUrl || `/audio/${q.id}.wav`,
+      chineseMeaning: q.chineseMeaning,
+    }));
+  })();
 
   const getQuestionTextById = (questionId: string) => {
     // 1. Check displayQuestions (topic questions)
@@ -330,8 +473,16 @@ export default function App() {
     return { text: `Question ${questionId}`, chinese: '', type: 'Listening', topic: 'General' };
   };
   
-  // Teachers pick from the global users list
-  const students = allUsers.filter(u => u.uid !== user?.uid);
+  // Teachers pick from the students who have signed in, plus anyone who has been
+  // allowlisted but hasn't logged in yet (shown as "Pre-registered").
+  const students = (() => {
+    const joined = allUsers.filter(u => u.uid !== user?.uid);
+    const joinedEmails = new Set(joined.map(u => (u.email || "").toLowerCase()));
+    const pending: UserProfile[] = allowlist
+      .filter(a => !joinedEmails.has(a.email) && a.email !== user?.email?.toLowerCase())
+      .map(a => ({ email: a.email, isInvited: true, lastActive: null }));
+    return [...joined, ...pending];
+  })();
 
   const [isGeneratingAudio, setIsGeneratingAudio] = useState(false);
   const [genStatus, setGenStatus] = useState("");
@@ -343,7 +494,7 @@ export default function App() {
     try {
       const response = await fetch('/api/admin/generate-audio-single', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await apiHeaders(),
         body: JSON.stringify({ id, text })
       });
       if (!response.ok) throw new Error("Failed to generate");
@@ -371,7 +522,7 @@ export default function App() {
     try {
       const response = await fetch('/api/admin/generate-audio-batch', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: await apiHeaders(),
         body: JSON.stringify({ questions: questionsToGen })
       });
 
@@ -501,7 +652,12 @@ export default function App() {
         'audio/aac'
       ].find(type => MediaRecorder.isTypeSupported(type)) || '';
 
-      const options = mimeType ? { mimeType } : undefined;
+      // 24 kbps mono opus is plenty for speech and keeps a 45s answer around
+      // 180 KB once base64-encoded, well inside the Firestore document limit.
+      const options: MediaRecorderOptions = {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: 24000,
+      };
       const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
@@ -540,29 +696,54 @@ export default function App() {
     }
   };
 
+  const blobToBase64 = (blob: Blob): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("Could not read the recording."));
+      reader.onload = () => {
+        const result = String(reader.result);
+        // strip the "data:audio/webm;base64," prefix
+        resolve(result.slice(result.indexOf(',') + 1));
+      };
+      reader.readAsDataURL(blob);
+    });
+
   const handleSave = async (audioBlob: Blob, mimeType: string, duration: number) => {
-    if (!currentQuestion || !user) return;
+    // The deck can move to a new card between starting and stopping a
+    // recording, so the question is captured in a ref when recording begins
+    // rather than read from state when it ends.
+    const q = recordingQuestionRef.current || currentQuestion;
+    if (!q || !user) return;
     setIsSaving(true);
     try {
-      // 1. Upload to Storage
-      const timestamp = Date.now();
-      const extension = mimeType.includes('mp4') ? 'mp4' : 
-                        mimeType.includes('ogg') ? 'ogg' : 'webm';
-      const filename = `recordings/${user.uid}/${currentQuestion.id}_${timestamp}.${extension}`;
-      const audioUrl = await uploadAudio(audioBlob, filename);
+      const audioBase64 = await blobToBase64(audioBlob);
 
-      // 2. Save metadata to Firestore
-      await saveRecording({
+      // Refuse loudly rather than saving a recording the teacher can never play.
+      if (audioBase64.length > MAX_INLINE_B64) {
+        alert(
+          `录音太长了（约 ${Math.round(duration)} 秒），无法保存。\n` +
+          `请控制在 2 分半以内后重新录制。`
+        );
+        return;
+      }
+
+      // 1. Metadata first — this is what the teacher's dashboard lists.
+      const recordingId = await saveRecording({
         studentId: user.uid,
         studentEmail: user.email || 'unknown',
-        questionId: currentQuestion.id,
-        questionText: currentQuestion.question,
-        topic: currentQuestion.topic,
-        audioUrl: audioUrl,
+        questionId: q.id,
+        questionText: q.question,
+        topic: q.topic,
+        hasAudio: true,
         mimeType: mimeType,
         duration: duration,
         status: 'pending'
       });
+      if (!recordingId) throw new Error("Could not create the submission record.");
+
+      // 2. Audio in its own document, fetched only when someone plays it.
+      await saveRecordingAudio(recordingId, user.uid, audioBase64, mimeType);
+
       alert("Saved! Your teacher will review it soon.");
     } catch (err: any) {
       console.error("Save error:", err);
@@ -594,7 +775,7 @@ export default function App() {
     }
   };
 
-  const playRecording = (rec: Recording) => {
+  const playRecording = async (rec: Recording) => {
     if (!rec.id) return;
 
     // Toggle logic for current recording
@@ -610,28 +791,31 @@ export default function App() {
     }
 
     stopAllPlayback();
-    
-    // Check for existence of audio data
-    const hasUrl = !!rec.audioUrl;
-    const hasBase64 = !!rec.audioBase64 && rec.audioBase64.length > 0;
-    
-    if (!hasUrl && !hasBase64) {
-      alert("No audio data available for this recording.");
-      return;
-    }
 
     let audioSrc = "";
 
     try {
-      if (hasUrl) {
-        audioSrc = rec.audioUrl!;
-      } else if (hasBase64) {
-        if (rec.audioBase64!.startsWith('data:audio/')) {
-          audioSrc = rec.audioBase64!;
-        } else {
-          const mime = rec.mimeType || 'audio/webm';
-          audioSrc = `data:${mime};base64,${rec.audioBase64}`;
+      if (rec.audioUrl) {
+        // Legacy: audio was uploaded to Firebase Storage.
+        audioSrc = rec.audioUrl;
+      } else if (rec.audioBase64) {
+        // Legacy: audio was inlined into the recording document itself.
+        audioSrc = rec.audioBase64.startsWith('data:audio/')
+          ? rec.audioBase64
+          : `data:${rec.mimeType || 'audio/webm'};base64,${rec.audioBase64}`;
+      } else if (audioCacheRef.current[rec.id]) {
+        audioSrc = audioCacheRef.current[rec.id];
+      } else {
+        // Current: audio lives in its own document, fetched on demand.
+        setLoadingAudioId(rec.id);
+        const stored = await loadRecordingAudio(rec.id);
+        setLoadingAudioId(null);
+        if (!stored) {
+          alert("No audio data available for this recording.");
+          return;
         }
+        audioSrc = `data:${stored.mimeType};base64,${stored.audioBase64}`;
+        audioCacheRef.current[rec.id] = audioSrc;
       }
 
       if (!audioSrc) throw new Error("unsupported audio format");
@@ -666,6 +850,7 @@ export default function App() {
       });
     } catch (err: any) {
       console.error("Playback setup error:", err);
+      setLoadingAudioId(null);
       stopAllPlayback();
     }
   };
@@ -697,16 +882,14 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900 font-sans p-4 md:p-8">
+    <div className="min-h-screen bg-page text-ink font-sans p-4 md:p-8">
       <div className="max-w-6xl mx-auto space-y-8">
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="w-12 h-12 bg-neutral-950 rounded-2xl flex items-center justify-center text-white font-black text-2xl shadow-xl transform -rotate-3 hover:rotate-0 transition-transform">
-              N
-            </div>
+          <div className="flex items-center gap-3">
+            <StarMascot className="w-11 h-11 shrink-0" />
             <div>
-              <h1 className="text-2xl font-bold tracking-tight text-neutral-950 font-display">Nova English Club</h1>
-              <p className="text-[10px] font-black uppercase tracking-widest text-neutral-400">Trinity GESE B1 Preparation Portal</p>
+              <h1 className="text-2xl font-display font-semibold tracking-tight text-ink">Nova English Club</h1>
+              <p className="text-xs text-muted">Trinity GESE B1</p>
             </div>
           </div>
           
@@ -736,22 +919,22 @@ export default function App() {
               </button>
             )}
             {user ? (
-              <div className="flex items-center gap-3 bg-white px-4 py-2 rounded-2xl border border-neutral-200 shadow-sm">
-                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+              <div className="flex items-center gap-3 bg-card px-4 py-2 rounded-2xl border border-line">
+                <div className="w-8 h-8 rounded-full bg-blue-soft flex items-center justify-center text-blue font-semibold">
                   {user.email?.[0].toUpperCase()}
                 </div>
                 <div className="text-xs">
-                  <p className="font-bold">{user.email}</p>
-                  <button onClick={logout} className="text-red-500 hover:underline">Logout</button>
+                  <p className="font-semibold text-ink">{user.email}</p>
+                  <button onClick={logout} className="text-muted hover:text-ink transition-colors">Sign out</button>
                 </div>
               </div>
             ) : (
-              <button 
+              <button
                 onClick={loginWithGoogle}
-                className="flex items-center gap-2 px-6 py-2.5 bg-neutral-950 text-white rounded-xl font-bold hover:bg-neutral-800 transition-all shadow-lg active:scale-95"
+                className="flex items-center gap-2 px-6 py-2.5 bg-blue text-white rounded-xl font-semibold hover:bg-blue-ink transition-colors active:scale-[0.98]"
               >
                 <LogIn className="w-4 h-4" />
-                Login to Practice
+                Sign in to practise
               </button>
             )}
           </div>
@@ -804,7 +987,9 @@ export default function App() {
                           if (input.value && input.value.includes('@')) {
                             try {
                               setGenStatus("Adding student...");
-                              await saveUserProfile({ email: input.value.trim().toLowerCase(), isInvited: true });
+                              // The allowlist entry is what admits them. Their profile
+                              // is created by the app itself on their first login.
+                              await addToAllowlist(input.value.trim().toLowerCase());
                               input.value = "";
                               setGenStatus("Student added successfully!");
                               setTimeout(() => setGenStatus(""), 3000);
@@ -1370,7 +1555,7 @@ export default function App() {
                                       }}
                                       className="p-2 rounded-lg bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors"
                                       title="Delete Base64 Bloat"
-                                      disabled={!rec.audioBase64}
+                                      disabled={!rec.audioBase64 && !rec.hasAudio}
                                     >
                                       <Trash2 className="w-4 h-4 outline-none" />
                                     </button>
@@ -1403,50 +1588,97 @@ export default function App() {
               ) : null}
             </div>
           </motion.div>
+        ) : activeDeck ? (
+          <PracticeDeck
+            deckName={activeDeck}
+            deckColor={deckColour(activeDeck)}
+            questions={deckQuestions}
+            cardState={deckCardState}
+            onToggleMark={toggleMark}
+            onSpeak={(q) => speakQuestion(q.question, q.audioUrl)}
+            onExit={() => { setActiveDeck(null); recordingQuestionRef.current = null; }}
+            isRecording={isRecording}
+            recordingTime={recordingTime}
+            isSaving={isSaving}
+            onStartRecording={startRecordingFor}
+            onStopRecording={stopRecording}
+          />
         ) : !activeModule ? (
           <div className="space-y-12 animate-in fade-in duration-500 py-6 select-none leading-normal">
-            <div className="text-center space-y-4 max-w-2xl mx-auto flex flex-col items-center">
-              <Mascot 
-                size="md" 
-                speechBubble="Welcome back! Let's conquer the B1 English exam! 🇬🇧🐾" 
+            <div className="text-center space-y-4 max-w-xl mx-auto flex flex-col items-center">
+              <Mascot
+                size="md"
+                speechBubble="慢慢来，说错了也没关系。"
                 className="mb-2"
               />
-              <h2 className="text-4xl font-extrabold uppercase tracking-tight text-neutral-950 font-display">
-                Choose Practice Module
+              <h2 className="text-4xl md:text-5xl font-display font-semibold tracking-tight text-ink">
+                What do you want to practise?
               </h2>
-              <p className="text-sm text-neutral-500 font-medium leading-relaxed">
-                Welcome to your B1 preparation studio. Train to listen and comprehend examiner questions, or practice speaking and recording full model responses.
+              <p className="text-sm text-ink-soft leading-relaxed">
+                Listening trains your ear for the examiner's questions.
+                Speaking is where you record an answer and send it to your teacher.
               </p>
             </div>
+
+            {/* Part 1 decks: the topics this student chose with their teacher. */}
+            {part1Decks.length > 0 && (
+              <div className="max-w-4xl mx-auto w-full">
+                <div className="flex items-baseline gap-3 mb-1">
+                  <h3 className="font-display text-lg font-semibold">Part 1</h3>
+                  <span className="text-xs font-medium text-gold-ink bg-gold-soft px-2 py-0.5 rounded-md">你自己选的</span>
+                  <span className="ml-auto text-xs text-muted">{part1Decks.length} 副牌</span>
+                </div>
+                <p className="text-sm text-ink-soft mb-4">考官只会问你准备过的生活。</p>
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                  {part1Decks.map(d => (
+                    <button
+                      key={d.topic}
+                      onClick={() => setActiveDeck(d.topic)}
+                      className="text-left rounded-2xl p-4 h-28 flex flex-col justify-between text-white transition-transform hover:-translate-y-0.5"
+                      style={{ background: deckColour(d.topic) }}
+                    >
+                      <span className="font-semibold text-sm leading-tight">{d.topic}</span>
+                      <span className="text-[11px] opacity-85">
+                        {d.total} 张{d.fresh > 0 ? ` · 没练过 ${d.fresh}` : ' · 全练过了'}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto pt-4">
               {/* CARD 1: Train Listening */}
               <button 
                 id="portal-btn-listening"
                 onClick={() => setActiveModule('listening')}
-                className="group text-left bg-white rounded-[2.5rem] border border-neutral-200/95 shadow-md hover:shadow-xl hover:border-neutral-950 hover:scale-[1.01] transition-all duration-300 p-8 md:p-12 flex flex-col justify-between min-h-[24rem]"
+                className="group text-left bg-card rounded-[2rem] border border-line hover:border-ink transition-colors duration-200 p-8 md:p-10 flex flex-col justify-between min-h-[22rem]"
               >
                 <div className="space-y-6">
-                  <div className="w-16 h-16 bg-blue-50 text-blue-600 border border-blue-100 rounded-2xl flex items-center justify-center text-3xl shadow-sm group-hover:bg-blue-600 group-hover:text-white group-hover:scale-105 transition-all duration-300">
-                    🎧
+                  <div className="w-14 h-14 bg-sand text-ink rounded-2xl flex items-center justify-center group-hover:bg-ink group-hover:text-page transition-colors duration-200">
+                    <Headphones className="w-6 h-6" />
                   </div>
-                  
+
                   <div className="space-y-2">
-                    <h3 className="text-2xl font-black text-neutral-950 font-display flex items-center gap-2">
-                      Train Listening <span className="text-xs font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">听力训练</span>
+                    <h3 className="text-2xl font-display font-semibold text-ink flex items-center gap-2.5">
+                      Listening
+                      <span className="text-xs font-sans font-medium text-muted">听力训练</span>
                     </h3>
-                    <p className="text-xs text-neutral-400 font-black tracking-widest uppercase">Examiner Question Drills</p>
-                    <p className="text-xs text-neutral-500 font-medium leading-relaxed pt-2">
-                      Train to accurately parse what the examiner asks. The question is kept hidden while you listen, catch core keywords, and identify sentence objectives across 4 core modes.
+                    <p className="text-sm text-ink-soft leading-relaxed">
+                      The question stays hidden while you listen. You catch the keywords
+                      by ear first, then check yourself against the text.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between border-t border-neutral-100 pt-6 mt-8 w-full font-sans text-[10px] font-black uppercase tracking-widest text-neutral-400 group-hover:text-blue-600 transition-colors">
-                  <span>Enter Training Studio ➔</span>
-                  <div className="flex gap-2">
-                    <span className="px-2.5 py-1 bg-neutral-100 text-neutral-500 rounded-lg text-[9px] font-black">Slow Option</span>
-                    <span className="px-2.5 py-1 bg-neutral-100 text-neutral-500 rounded-lg text-[9px] font-black">4 steps</span>
+                <div className="flex items-center justify-between border-t border-line pt-5 mt-8 w-full text-sm">
+                  <span className="font-semibold text-ink inline-flex items-center gap-1.5">
+                    Start listening
+                    <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                  </span>
+                  <div className="flex gap-2 text-xs text-ink-soft">
+                    <span className="px-2.5 py-1 bg-sand rounded-lg">Slower playback</span>
+                    <span className="px-2.5 py-1 bg-sand rounded-lg">4 steps</span>
                   </div>
                 </div>
               </button>
@@ -1455,29 +1687,33 @@ export default function App() {
               <button 
                 id="portal-btn-speaking"
                 onClick={() => setActiveModule('speaking')}
-                className="group text-left bg-white rounded-[2.5rem] border border-neutral-200/95 shadow-md hover:shadow-xl hover:border-neutral-950 hover:scale-[1.01] transition-all duration-300 p-8 md:p-12 flex flex-col justify-between min-h-[24rem]"
+                className="group text-left bg-card rounded-[2rem] border border-line hover:border-blue transition-colors duration-200 p-8 md:p-10 flex flex-col justify-between min-h-[22rem]"
               >
                 <div className="space-y-6">
-                  <div className="w-16 h-16 bg-neutral-50 text-neutral-800 border border-neutral-100 rounded-2xl flex items-center justify-center text-3xl shadow-sm group-hover:bg-neutral-950 group-hover:text-white group-hover:scale-105 transition-all duration-300">
-                    🎙️
+                  <div className="w-14 h-14 bg-blue-soft text-blue rounded-2xl flex items-center justify-center group-hover:bg-blue group-hover:text-white transition-colors duration-200">
+                    <Mic className="w-6 h-6" />
                   </div>
-                  
+
                   <div className="space-y-2">
-                    <h3 className="text-2xl font-black text-neutral-950 font-display flex items-center gap-2">
-                      Practice Speaking <span className="text-xs font-bold text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-full">口语实战</span>
+                    <h3 className="text-2xl font-display font-semibold text-ink flex items-center gap-2.5">
+                      Speaking
+                      <span className="text-xs font-sans font-medium text-muted">口语实战</span>
                     </h3>
-                    <p className="text-xs text-neutral-400 font-black tracking-widest uppercase">Record Responses & Get Grading</p>
-                    <p className="text-xs text-neutral-500 font-medium leading-relaxed pt-2">
-                      Prepare full personalized answers. Practice reading topics under normal speed audio guidance, record vocal submissions via standard mic inputs, and submit them directly to teachers.
+                    <p className="text-sm text-ink-soft leading-relaxed">
+                      Record a full answer to a topic question. It goes straight to your
+                      teacher, who listens and writes back.
                     </p>
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between border-t border-neutral-100 pt-6 mt-8 w-full font-sans text-[10px] font-black uppercase tracking-widest text-neutral-400 group-hover:text-neutral-950 transition-colors">
-                  <span>Start Practice Session ➔</span>
-                  <div className="flex gap-2">
-                    <span className="px-2.5 py-1 bg-neutral-100 text-neutral-500 rounded-lg text-[9px] font-black">Audio submit</span>
-                    <span className="px-2.5 py-1 bg-neutral-100 text-neutral-500 rounded-lg text-[9px] font-black">Grading</span>
+                <div className="flex items-center justify-between border-t border-line pt-5 mt-8 w-full text-sm">
+                  <span className="font-semibold text-blue inline-flex items-center gap-1.5">
+                    Start speaking
+                    <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
+                  </span>
+                  <div className="flex gap-2 text-xs text-ink-soft">
+                    <span className="px-2.5 py-1 bg-sand rounded-lg">Record</span>
+                    <span className="px-2.5 py-1 bg-sand rounded-lg">Teacher replies</span>
                   </div>
                 </div>
               </button>
@@ -1488,7 +1724,7 @@ export default function App() {
             user={user}
             selectedTopic={selectedTopic}
             setSelectedTopic={setSelectedTopic}
-            displayQuestions={getDisplayQuestions()}
+            displayQuestions={listeningDrillQuestions}
             listeningMetadata={listeningMetadata}
             listeningMarks={listeningMarks}
             isAdmin={isAdmin}
@@ -2132,7 +2368,7 @@ export default function App() {
                                             </a>
                                           )}
                                           
-                                          {(!rec.audioUrl && !rec.audioBase64) ? (
+                                          {(!rec.audioUrl && !rec.audioBase64 && !rec.hasAudio) ? (
                                             <div className="px-2.5 py-1.5 bg-red-50 border border-red-100 rounded-lg text-[9px] font-black text-red-500 uppercase tracking-widest whitespace-nowrap">
                                               No Audio
                                             </div>
@@ -2232,7 +2468,7 @@ export default function App() {
                               </a>
                             )}
                             
-                            {(!rec.audioUrl && !rec.audioBase64) ? (
+                            {(!rec.audioUrl && !rec.audioBase64 && !rec.hasAudio) ? (
                               <div className="px-4 py-3 bg-red-50 border border-red-100 rounded-xl text-[10px] font-black text-red-500 uppercase tracking-widest whitespace-nowrap">
                                 No audio data
                               </div>

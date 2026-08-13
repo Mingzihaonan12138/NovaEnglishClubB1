@@ -11,6 +11,63 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// ---------------------------------------------------------------------------
+// Auth
+//
+// These routes spend the teacher's Gemini quota, so they must not be open to
+// anyone who happens to find the deployed URL. The client sends a Firebase ID
+// token; we hand it to Google's Identity Toolkit, which rejects forged or
+// expired tokens, and check the resulting email against the admin list.
+// ---------------------------------------------------------------------------
+const firebaseConfig = JSON.parse(
+  fs.readFileSync(path.join(__dirname, 'firebase-applet-config.json'), 'utf8')
+);
+
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || 'xuanyu.diao@gmail.com,aitonghan02@gmail.com')
+  .split(',')
+  .map(s => s.trim().toLowerCase())
+  .filter(Boolean);
+
+interface AuthUser {
+  email: string;
+  emailVerified: boolean;
+}
+
+async function verifyIdToken(req: express.Request): Promise<AuthUser | null> {
+  const header = req.headers.authorization || '';
+  const idToken = header.startsWith('Bearer ') ? header.slice(7).trim() : '';
+  if (!idToken) return null;
+
+  try {
+    const resp = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ idToken }),
+      }
+    );
+    if (!resp.ok) return null;
+    const data: any = await resp.json();
+    const u = data.users?.[0];
+    if (!u?.email) return null;
+    return { email: String(u.email).toLowerCase(), emailVerified: !!u.emailVerified };
+  } catch (err) {
+    console.error('[Auth] Token verification failed:', err);
+    return null;
+  }
+}
+
+async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const user = await verifyIdToken(req);
+  if (!user) return res.status(401).json({ error: 'UNAUTHENTICATED', details: 'Please sign in again.' });
+  if (!user.emailVerified || !ADMIN_EMAILS.includes(user.email)) {
+    return res.status(403).json({ error: 'FORBIDDEN', details: 'Teacher account required.' });
+  }
+  (req as any).authUser = user;
+  next();
+}
+
 // Use the same helper for audio generation
 async function generateAudio(text: string, filename: string, force = false) {
   const apiKey = process.env.GEMINI_API_KEY;
@@ -147,8 +204,9 @@ async function startServer() {
       }
 
       console.log(`[AudioGen Interceptor] Found question text: "${questionText}". Starting generation...`);
-      // Generate audio
-      const success = await generateAudio(questionText, relativePath, true);
+      // Generate audio (never force: the file-exists check above already short-
+      // circuits, so forcing here only lets a refresh loop re-burn API quota)
+      const success = await generateAudio(questionText, relativePath, false);
       if (success) {
         console.log(`[AudioGen Interceptor] Successfully generated on-the-fly: ${relativePath}`);
       } else {
@@ -177,93 +235,15 @@ async function startServer() {
     });
   });
 
-  // API Route for Pronunciation Analysis
-  app.post('/api/analyze', async (req, res) => {
-    try {
-      const { audioBase64, expectedText } = req.body;
-      if (!audioBase64) return res.status(400).json({ error: "No audio data provided" });
-
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return res.status(500).json({ 
-          error: "GEMINI_API_KEY_MISSING",
-          details: "Gemini API Key is not configured on the server."
-        });
-      }
-
-      const ai = new GoogleGenAI({ apiKey });
-      const result = await ai.models.generateContent({
-        model: "gemini-3.1-flash-pro-preview", 
-        contents: [
-          {
-            parts: [
-              {
-                text: `You are an expert English coach specializing in the Trinity B1 exam. 
-                Evaluate the student's audio for their answer: "${expectedText}". 
-                Reply in Chinese. Start with encouragement. Focus on "交流感" (Sense of communication). 
-                Provide 1-2 tips for natural speaking and 2-3 key words to practice.`
-              },
-              {
-                inlineData: {
-                  data: audioBase64,
-                  mimeType: "audio/webm"
-                }
-              }
-            ]
-          }
-        ],
-      });
-
-      res.json({ feedback: result.candidates?.[0]?.content?.parts?.[0]?.text });
-    } catch (err: any) {
-      console.error("[Analysis Error]:", err);
-      res.status(500).json({ 
-        error: "INTERNAL_SERVER_ERROR", 
-        details: err.message 
-      });
-    }
-  });
-
-  // API Route to save generated audio
-  app.post('/api/save-audio', async (req, res) => {
-    try {
-      const { filename, base64Data } = req.body;
-      if (!filename || !base64Data) return res.status(400).json({ error: "Missing filename or data" });
-
-      const audioDir = path.join(process.cwd(), 'public', 'audio');
-      if (!fs.existsSync(audioDir)) fs.mkdirSync(audioDir, { recursive: true });
-
-      const filePath = path.join(audioDir, filename);
-      const audioBuffer = Buffer.from(base64Data, 'base64');
-      
-      // If it already starts with RIFF, it's already a WAV file
-      if (audioBuffer.toString('utf8', 0, 4) === 'RIFF') {
-        fs.writeFileSync(filePath, audioBuffer);
-      } else {
-        const wavHeader = Buffer.alloc(44);
-        wavHeader.write("RIFF", 0);
-        wavHeader.writeUInt32LE(audioBuffer.length + 36, 4);
-        wavHeader.write("WAVE", 8);
-        wavHeader.write("fmt ", 12);
-        wavHeader.writeUInt32LE(16, 16);
-        wavHeader.writeUInt16LE(1, 20); // PCM
-        wavHeader.writeUInt16LE(1, 22); // Mono
-        wavHeader.writeUInt32LE(24000, 24);
-        wavHeader.writeUInt32LE(48000, 28);
-        wavHeader.writeUInt16LE(2, 32);
-        wavHeader.writeUInt16LE(16, 34);
-        wavHeader.write("data", 36);
-        wavHeader.writeUInt32LE(audioBuffer.length, 40);
-        fs.writeFileSync(filePath, Buffer.concat([wavHeader, audioBuffer]));
-      }
-      res.json({ success: true, path: `/audio/${filename}` });
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // NOTE: the old POST /api/analyze route (AI pronunciation feedback) was removed
+  // on purpose — the teacher gives feedback by hand, which costs no API quota.
+  // The old POST /api/save-audio route was also removed. Nothing in the client
+  // called it, and it wrote `path.join(audioDir, filename)` straight from the
+  // request body, so a filename like "../../server.ts" could overwrite any file
+  // on the server.
 
   // API Route to generate single audio
-  app.post('/api/admin/generate-audio-single', async (req, res) => {
+  app.post('/api/admin/generate-audio-single', requireAdmin, async (req, res) => {
     try {
       const { id, text } = req.body;
       if (!id || !text) return res.status(400).json({ error: "ID and text required" });
@@ -280,7 +260,7 @@ async function startServer() {
   });
 
   // API Route to batch generate audio (Admin only)
-  app.post('/api/admin/generate-audio-batch', async (req, res) => {
+  app.post('/api/admin/generate-audio-batch', requireAdmin, async (req, res) => {
     try {
       const { questions } = req.body; // Array of { id, text }
       if (!Array.isArray(questions)) return res.status(400).json({ error: "Questions must be an array" });
