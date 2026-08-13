@@ -1,0 +1,97 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    function isV1Admin() {
+      // In this simple app, we treat the teacher as admin
+      return isSignedIn() && (request.auth.token.email.lower() == 'xuanyu.diao@gmail.com' || request.auth.token.email.lower() == 'aitonghan02@gmail.com');
+    }
+
+    function isValidRecording(data) {
+      return data.keys().hasAll(['studentId', 'questionId', 'audioUrl', 'createdAt', 'status']) &&
+             data.studentId is string &&
+             data.questionId is string &&
+             data.audioUrl is string &&
+             data.audioUrl.size() < 2048 &&
+             data.status in ['pending', 'reviewed'];
+    }
+
+    function isValidListeningMark(data) {
+      return data.keys().hasAll(['userId', 'studentEmail', 'questionId', 'topic', 'marked']) &&
+             data.userId is string &&
+             data.studentEmail is string &&
+             data.questionId is string &&
+             data.topic is string &&
+             data.marked is bool;
+    }
+
+    match /recordings/{recordingId} {
+      allow create: if isSignedIn() && isValidRecording(request.resource.data) && request.resource.data.studentId == request.auth.uid;
+      allow read: if isOwner(resource.data.studentId) || isV1Admin();
+      allow update: if isV1Admin() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['teacherFeedback', 'status', 'studentId', 'oldStudentId', 'updatedAt', 'audioBase64']);
+      allow delete: if isV1Admin();
+      allow list: if isSignedIn() && (resource.data.studentId == request.auth.uid || isV1Admin());
+    }
+
+    match /userTopics/{topicId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isV1Admin());
+      allow write: if isV1Admin();
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isV1Admin());
+    }
+
+    match /userConversations/{convId} {
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isV1Admin());
+      allow write: if isV1Admin();
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isV1Admin());
+    }
+
+    match /globalTopics/{topicId} {
+      allow read: if isSignedIn();
+      allow write: if isV1Admin();
+    }
+
+    match /listeningMetadata/{questionId} {
+      allow read: if isSignedIn();
+      allow write: if isV1Admin();
+    }
+
+    match /listeningProgress/{progressId} {
+      allow create: if isSignedIn() && request.resource.data.studentId == request.auth.uid;
+      allow read: if isSignedIn() && (resource.data.studentId == request.auth.uid || isV1Admin());
+      allow update: if isSignedIn() && request.resource.data.studentId == request.auth.uid && resource.data.studentId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.studentId == request.auth.uid;
+      allow list: if isSignedIn() && (resource.data.studentId == request.auth.uid || isV1Admin());
+    }
+
+    match /listeningMarked/{markedId} {
+      allow create: if isSignedIn() && isValidListeningMark(request.resource.data) && request.resource.data.userId == request.auth.uid;
+      allow read: if isSignedIn() && (resource.data.userId == request.auth.uid || isV1Admin());
+      allow update: if isSignedIn() && isValidListeningMark(request.resource.data) && request.resource.data.userId == request.auth.uid && resource.data.userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow list: if isSignedIn() && (resource.data.userId == request.auth.uid || isV1Admin());
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || isV1Admin());
+      allow write: if isV1Admin() || (isSignedIn() && request.auth.uid == uid);
+      allow list: if isV1Admin();
+    }
+
+    match /settings/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isV1Admin();
+    }
+  }
+}

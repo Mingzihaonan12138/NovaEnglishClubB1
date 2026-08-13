@@ -1,0 +1,42 @@
+<svg viewBox="0 0 400 400" width="800" height="800" xmlns="http://www.w3.org/2000/svg">
+  <!-- Off-white background matching uploaded image -->
+  <rect width="400" height="400" fill="#FAF6EE" />
+  
+  <!-- Top-Right Blue Accent Marks -->
+  <rect x="290" y="60" width="11" height="26" rx="5.5" fill="#3B529B" transform="rotate(22 295 73)" />
+  <rect x="315" y="78" width="11" height="26" rx="5.5" fill="#3B529B" transform="rotate(35 320 91)" />
+
+  <!-- Organic Star Body (Yellow) -->
+  <path
+    d="M 200 52
+       C 238 52, 246 106, 280 118
+       C 314 130, 362 126, 366 162
+       C 370 198, 318 230, 322 270
+       C 326 310, 350 348, 318 366
+       C 286 384, 244 348, 200 352
+       C 156 348, 114 384, 82 366
+       C 50 348, 74 310, 78 270
+       C 82 230, 30 198, 34 162
+       C 38 126, 86 130, 120 118
+       C 154 106, 162 52, 200 52 Z"
+    fill="#ECC239"
+  />
+
+  <!-- Eyes -->
+  <!-- Left Eye -->
+  <ellipse cx="178" cy="198" rx="22" ry="29" fill="#FFFFFF" />
+  <ellipse cx="170" cy="204" rx="11" ry="14" fill="#0C0C0C" />
+
+  <!-- Right Eye -->
+  <ellipse cx="236" cy="198" rx="22" ry="29" fill="#FFFFFF" />
+  <ellipse cx="228" cy="202" rx="11" ry="14" fill="#0C0C0C" />
+
+  <!-- Bottom-Left Blue Chat Bubble Character -->
+  <ellipse cx="82" cy="282" rx="28" ry="26" fill="#3B529B" />
+  <path d="M 102 298 Q 124 310 110 286 Z" fill="#3B529B" />
+  <circle cx="74" cy="278" r="4" fill="#FFFFFF" />
+  <circle cx="88" cy="278" r="4" fill="#FFFFFF" />
+
+  <!-- Text: Nova English Club -->
+  <text x="200" y="380" font-family="'Comic Sans MS', 'Fredoka', 'Quicksand', 'Arial Rounded MT Bold', sans-serif" font-size="34" font-weight="900" fill="#3B529B" text-anchor="middle">Nova English Club</text>
+</svg>

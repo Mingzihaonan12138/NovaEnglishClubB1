@@ -1,0 +1,173 @@
+{
+  "entities": {
+    "Recording": {
+      "title": "Recording",
+      "description": "Student voice recording for a specific question",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "questionId": { "type": "string" },
+        "questionText": { "type": "string" },
+        "topic": { "type": "string" },
+        "audioUrl": { "type": "string", "description": "URL to the stored audio file" },
+        "mimeType": { "type": "string" },
+        "duration": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "teacherFeedback": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "reviewed"] }
+      },
+      "required": ["studentId", "questionId", "audioUrl", "createdAt", "status", "mimeType", "duration"]
+    },
+    "UserTopic": {
+      "title": "User Topic",
+      "description": "User's personalized exam topic (Part 1)",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "topicName": { "type": "string" },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "question": { "type": "string" },
+              "suggestedAnswer": { "type": "string" }
+            }
+          }
+        },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "topicName"]
+    },
+    "PersonalizedConversation": {
+      "title": "Personalized Conversation",
+       "description": "User's individual answers for fixed Part 2 topics",
+       "type": "object",
+       "properties": {
+         "userId": { "type": "string" },
+         "topicName": { "type": "string" },
+         "answers": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+         }
+       },
+       "required": ["userId", "topicName"]
+    },
+    "UserProfile": {
+      "title": "User Profile",
+      "description": "Basic information about a registered user",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "lastActive": { "type": "string", "format": "date-time" },
+        "isInvited": { "type": "boolean", "description": "Flag for pre-registered students" }
+      },
+      "required": ["email"]
+    },
+    "GlobalTopic": {
+      "title": "Global Topic",
+      "description": "Standardized exam topics and questions (Template)",
+      "type": "object",
+      "properties": {
+        "topicName": { "type": "string" },
+        "section": { "type": "string", "enum": ["Part 1", "Part 2"] },
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": { "type": "string" },
+              "question": { "type": "string" },
+              "suggestedAnswer": { "type": "string", "description": "Default answer for template" }
+            }
+          }
+        }
+      },
+      "required": ["topicName", "section"]
+    },
+    "ListeningMetadata": {
+      "title": "Listening Metadata",
+      "description": "Additional translation, keyword list, slow voice audio, and question type classifications for listening drills",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "chineseMeaning": { "type": "string" },
+        "keywords": { "type": "string" },
+        "questionType": { "type": "string" },
+        "slowAudioUrl": { "type": "string" },
+        "normalAudioUrl": { "type": "string" }
+      },
+      "required": ["id"]
+    },
+    "ListeningProgress": {
+      "title": "Listening Progress",
+      "description": "Record of student completion of specific listening drill modes on questions",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "questionId": { "type": "string" },
+        "topic": { "type": "string" },
+        "completedModes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["studentId", "questionId", "createdAt"]
+    },
+    "ListeningMarked": {
+      "title": "Listening Marked Item",
+      "description": "Records if a student flagged a listening drill question as Need Practice",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "questionId": { "type": "string" },
+        "topic": { "type": "string" },
+        "marked": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "studentEmail", "questionId", "topic", "marked"]
+    }
+  },
+  "firestore": {
+    "listeningMarked/{markedId}": {
+      "schema": "ListeningMarked",
+      "description": "Difficulty flag/marked state for listening drill items per student"
+    },
+    "users/{uid}": {
+      "schema": "UserProfile",
+      "description": "Registered students and admins"
+    },
+    "globalTopics/{topicId}": {
+      "schema": "GlobalTopic",
+      "description": "Public question library managed by teacher"
+    },
+    "recordings/{recordingId}": {
+      "schema": "Recording",
+      "description": "Store student recordings and teacher feedback"
+    },
+    "userTopics/{topicId}": {
+      "schema": "UserTopic",
+      "description": "Part 1 topics for a specific user"
+    },
+    "userConversations/{convId}": {
+      "schema": "PersonalizedConversation",
+      "description": "Part 2 personalized answers mapping"
+    },
+    "listeningMetadata/{questionId}": {
+      "schema": "ListeningMetadata",
+      "description": "Listening translation, keywords, and speeds configured by teacher"
+    },
+    "listeningProgress/{progressId}": {
+      "schema": "ListeningProgress",
+      "description": "Tracks which listening questions and modes students have parsed and answered"
+    }
+  }
+}

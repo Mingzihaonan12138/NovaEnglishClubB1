@@ -1,0 +1,6 @@
+{
+  "name": "Nova English Club - Trinity GESE B1 Portal",
+  "description": "Premium preparation portal for Nova English Club students targeting the Trinity GESE B1 exam, featuring personalized topic management and teacher feedback.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
