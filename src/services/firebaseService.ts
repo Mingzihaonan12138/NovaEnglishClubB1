@@ -408,6 +408,19 @@ export interface AllowlistEntry {
   addedAt?: any;
 }
 
+/**
+ * Whether this account has been taken on by the teacher. Anyone may sign in and
+ * look around; only enrolled accounts may submit work. Watching a single
+ * document means the app reacts the moment the teacher enrols someone, without
+ * asking them to sign out and back in.
+ */
+export function subscribeToMyEnrolment(email: string, callback: (enrolled: boolean) => void) {
+  const key = email.trim().toLowerCase();
+  return onSnapshot(doc(db, 'allowlist', key), (snap) => {
+    callback(snap.exists());
+  }, () => callback(false));
+}
+
 export function subscribeToAllowlist(callback: (entries: AllowlistEntry[]) => void) {
   return onSnapshot(collection(db, 'allowlist'), (snapshot) => {
     callback(snapshot.docs.map(d => ({ email: d.id, ...d.data() } as AllowlistEntry)));

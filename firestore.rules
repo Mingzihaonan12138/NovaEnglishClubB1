@@ -30,25 +30,20 @@ service cloud.firestore {
     }
 
     // --- Access control -----------------------------------------------------
-    // Without this, anyone with a Google account could sign in, get a profile
-    // created for them, and start consuming the project's quota. The teacher
-    // adds a student by writing /allowlist/<their email>; only then can that
-    // account create its own /users profile.
+    // Signing in is open: anyone with a Google account may create their own
+    // profile and try the app. That is the top of the funnel, and it is what
+    // lets the teacher see who turned up before deciding to take them on.
     //
-    // Students who already have a /users document keep working untouched, so
-    // turning this on does not lock out the current class.
-    function isAllowlisted() {
+    // Being ENROLLED is a separate, teacher-granted step. The teacher writes
+    // /allowlist/<lowercased email>, and only then may the account submit
+    // recordings or accumulate progress. Everything an anonymous visitor can do
+    // is read-only, because writes are what consume the project's quota — a
+    // single recording is up to 1 MB and the free tier holds about 5,800 of
+    // them, so an open write path would be the one thing worth abusing.
+    function isEnrolled() {
       return isSignedIn() &&
              request.auth.token.email != null &&
              exists(/databases/$(database)/documents/allowlist/$(request.auth.token.email.lower()));
-    }
-
-    // Either already has a profile, or has just been allowlisted and is about to
-    // get one. Accepting both means adding a student to the allowlist admits
-    // them immediately, with no window where they are signed in but blocked.
-    function isEnrolled() {
-      return isSignedIn() &&
-             (exists(/databases/$(database)/documents/users/$(request.auth.uid)) || isAllowlisted());
     }
 
     function isValidRecordingAudio(data) {
@@ -68,11 +63,15 @@ service cloud.firestore {
              data.marked is bool;
     }
 
-    // Only the teacher reads this — it is a list of student emails. The
-    // isAllowlisted() check above still works for everyone, because exists()
-    // inside a rule is evaluated with full access, not the caller's.
+    // The roster of enrolled students. A visitor may check their own entry so
+    // the app can tell them whether the teacher has taken them on yet; only the
+    // teacher may read the whole list or change it.
     match /allowlist/{email} {
-      allow read, write: if isV1Admin();
+      allow get: if isV1Admin() ||
+                    (isSignedIn() && request.auth.token.email != null &&
+                     request.auth.token.email.lower() == email);
+      allow list: if isV1Admin();
+      allow write: if isV1Admin();
     }
 
     // The audio for one recording, kept out of /recordings so that listing
@@ -149,11 +148,10 @@ service cloud.firestore {
 
     match /users/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || isV1Admin());
-      // Creating a profile is the moment an account becomes a student, so it is
-      // gated on the allowlist. Updating an existing profile is not, which is
-      // what keeps the current class working after this rule goes live.
-      allow create: if isV1Admin() || (isSignedIn() && request.auth.uid == uid && isAllowlisted());
-      allow update, delete: if isV1Admin() || (isSignedIn() && request.auth.uid == uid);
+      // Open on purpose: a profile is how the teacher discovers that someone
+      // turned up. It grants nothing on its own — submitting work requires
+      // being on the allowlist.
+      allow create, update, delete: if isV1Admin() || (isSignedIn() && request.auth.uid == uid);
       allow list: if isV1Admin();
     }
 

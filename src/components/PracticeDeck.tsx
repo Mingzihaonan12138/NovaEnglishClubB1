@@ -26,6 +26,8 @@ interface PracticeDeckProps {
   isSaving: boolean;
   onStartRecording: (q: QuestionAnswer) => void;
   onStopRecording: () => void;
+  /** Anyone may practise; only enrolled students may send work to the teacher. */
+  canSubmit: boolean;
 }
 
 const WEEK = 7 * 24 * 60 * 60 * 1000;
@@ -69,7 +71,7 @@ export default function PracticeDeck({
   deckName, deckColor, questions, cardState,
   onToggleMark, onSpeak, onExit,
   isRecording, recordingTime, isSaving,
-  onStartRecording, onStopRecording,
+  onStartRecording, onStopRecording, canSubmit,
 }: PracticeDeckProps) {
   const reduce = useReducedMotion();
 
@@ -274,8 +276,13 @@ export default function PracticeDeck({
               onClick={() => current && onStartRecording(current)}
               className="flex items-center gap-2.5 px-7 py-3.5 rounded-2xl bg-blue text-white font-semibold"
             >
-              <Mic className="w-4 h-4" /> 录一遍
+              <Mic className="w-4 h-4" /> {canSubmit ? '录一遍' : '录一遍试试'}
             </button>
+            {!canSubmit && (
+              <p className="text-xs text-muted text-center max-w-xs">
+                录音只在你自己这边播放。想让老师听并给你反馈，跟老师说一声开通就好。
+              </p>
+            )}
             <div className="flex items-center gap-5 text-xs text-muted">
               {state?.keywords && !showHint && (
                 <button onClick={() => setShowHint(true)} className="hover:text-ink transition-colors">

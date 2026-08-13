@@ -19,7 +19,7 @@ import {
   subscribeToGlobalTopics, saveGlobalTopic, deleteGlobalTopic, GlobalTopic,
   bindUserOnLogin, cloneStudentData, db, fetchPaginatedRecordings,
   deleteAudioBase64, saveRecordingAudio, loadRecordingAudio, MAX_INLINE_B64,
-  addToAllowlist, subscribeToAllowlist, AllowlistEntry,
+  addToAllowlist, subscribeToAllowlist, AllowlistEntry, subscribeToMyEnrolment,
   ListeningMetadata, ListeningProgress, saveListeningMetadata,
   subscribeToListeningMetadata, saveListeningProgress,
   subscribeToStudentListeningProgress,
@@ -70,6 +70,8 @@ export default function App() {
   const [userConvs, setUserConvs] = useState<PersonalizedConversation[]>([]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [allowlist, setAllowlist] = useState<AllowlistEntry[]>([]);
+  /** Signed in is not the same as taken on. Only enrolled accounts submit work. */
+  const [isEnrolled, setIsEnrolled] = useState(false);
   const [globalTopics, setGlobalTopics] = useState<GlobalTopic[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string | null>(null);
   const [studentSearch, setStudentSearch] = useState("");
@@ -214,6 +216,7 @@ export default function App() {
     let unsubscribeGlobal: any;
     let unsubscribeListeningMeta: any;
     let unsubscribeListeningBank: any;
+    let unsubscribeEnrolment: any;
     let unsubscribeListeningAssign: any;
     let unsubscribeListeningProg: any;
     let unsubscribeListeningMarks: any;
@@ -221,6 +224,9 @@ export default function App() {
     unsubscribeGlobal = subscribeToGlobalTopics((data) => setGlobalTopics(data));
     unsubscribeListeningMeta = subscribeToListeningMetadata((data) => setListeningMetadata(data));
     unsubscribeListeningBank = subscribeToListeningQuestions((data) => setListeningQuestions(data));
+    if (user.email) {
+      unsubscribeEnrolment = subscribeToMyEnrolment(user.email, (ok) => setIsEnrolled(ok || isAdmin));
+    }
     unsubscribeListeningAssign = subscribeToListeningAssignment(user.uid, (ids) => setAssignedListeningIds(ids));
 
     if (user) {
@@ -265,6 +271,7 @@ export default function App() {
       unsubscribeGlobal && unsubscribeGlobal();
       unsubscribeListeningMeta && unsubscribeListeningMeta();
       unsubscribeListeningBank && unsubscribeListeningBank();
+      unsubscribeEnrolment && unsubscribeEnrolment();
       unsubscribeListeningAssign && unsubscribeListeningAssign();
       unsubscribeListeningProg && unsubscribeListeningProg();
       unsubscribeListeningMarks && unsubscribeListeningMarks();
@@ -714,6 +721,18 @@ export default function App() {
     // rather than read from state when it ends.
     const q = recordingQuestionRef.current || currentQuestion;
     if (!q || !user) return;
+
+    // Visitors may record and listen back to themselves, but nothing leaves the
+    // browser. Uploads are the only expensive write in this app, so they are
+    // reserved for students the teacher has actually taken on.
+    if (!isEnrolled) {
+      const url = URL.createObjectURL(audioBlob);
+      const audio = new Audio(url);
+      audio.onended = () => URL.revokeObjectURL(url);
+      audio.play().catch(() => URL.revokeObjectURL(url));
+      return;
+    }
+
     setIsSaving(true);
     try {
       const audioBase64 = await blobToBase64(audioBlob);
@@ -1602,6 +1621,7 @@ export default function App() {
             isSaving={isSaving}
             onStartRecording={startRecordingFor}
             onStopRecording={stopRecording}
+            canSubmit={isEnrolled}
           />
         ) : !activeModule ? (
           <div className="space-y-12 animate-in fade-in duration-500 py-6 select-none leading-normal">
