@@ -82,6 +82,23 @@ function CardCrate({
     raw.set(t * (questions.length - 1));
   };
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (rising) return;
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+        e.preventDefault();
+        const next = Math.min(Math.max(centre + (e.key === 'ArrowRight' ? 1 : -1), 0), questions.length - 1);
+        raw.set(next);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const q = questions[centre];
+        if (q) take(q);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  });
+
   const take = (q: QuestionAnswer) => {
     if (rising) return;
     if (reduce) return onPick(q);
@@ -93,11 +110,22 @@ function CardCrate({
 
   return (
     <div className="w-full">
+      {/*
+        The whole strip is the control, not the individual cards.
+        Which card is in focus comes from where the pointer is horizontally, but
+        that card is always drawn in the middle, so the pointer was almost never
+        over it: clicking landed on empty space or on some other card. Moving
+        browses, clicking takes whatever is currently raised, wherever the
+        pointer happens to be.
+      */}
       <div
         ref={wrap}
         onPointerMove={(e) => track(e.clientX)}
         onPointerDown={(e) => track(e.clientX)}
-        className="relative h-[24rem] w-full cursor-ew-resize touch-pan-y"
+        onClick={() => { const q = questions[centre]; if (q) take(q); }}
+        role="button"
+        aria-label={`抽出第 ${centre + 1} 张，共 ${questions.length} 张`}
+        className="relative h-[24rem] w-full cursor-pointer touch-pan-y"
         style={{ perspective: 1500 }}
       >
         {questions.map((q, i) => {
@@ -119,7 +147,6 @@ function CardCrate({
                 fresh={fresh}
                 marked={!!st?.marked}
                 age={age}
-                onPick={() => take(q)}
               />
             </div>
           );
@@ -151,7 +178,6 @@ interface CrateCardProps {
   fresh: boolean;
   marked: boolean;
   age: number;
-  onPick: () => void;
 }
 
 /**
@@ -165,7 +191,7 @@ interface CrateCardProps {
  * so the card pulled out is visibly the card that was looked at.
  */
 function CrateCard({
-  index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age, onPick,
+  index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
   // The row parts around the cursor, most strongly at the nearest neighbours,
@@ -182,9 +208,11 @@ function CrateCard({
       className="absolute left-1/2 top-1/2 w-[13rem] h-[18rem] -ml-[6.5rem] -mt-[9rem]"
       style={{ x, z, transformStyle: 'preserve-3d', zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index) }}
     >
-      <motion.button
-        onClick={onPick}
-        aria-label={isCentre ? '抽这张' : '移到这张'}
+      <div
+        className="w-full h-full rounded-[1.1rem] relative"
+        style={{ pointerEvents: 'none' }}
+      >
+      <motion.div
         className="w-full h-full rounded-[1.1rem] relative"
         style={{ background: deckColor, transformStyle: 'preserve-3d' }}
         animate={{
@@ -222,7 +250,8 @@ function CrateCard({
         {marked && (
           <span className="absolute top-3 left-3 w-2.5 h-2.5 rounded-full bg-gold pointer-events-none" />
         )}
-      </motion.button>
+      </motion.div>
+      </div>
     </motion.div>
   );
 }
@@ -293,10 +322,14 @@ export default function PracticeDeck({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isRecording) return;
+      // While browsing the crate the arrows belong to it, for walking the row.
+      // Both handlers were live at once, so one press moved the row and left
+      // the deck at the same time. Escape still gets out from anywhere.
+      if (e.code === 'Escape') { onExit(); return; }
+      if (picking) return;
       if (e.code === 'Space') { e.preventDefault(); revealed ? deal() : reveal(); }
       else if (e.code === 'ArrowLeft') back();
       else if (e.code === 'ArrowRight') deal();
-      else if (e.code === 'Escape') onExit();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
