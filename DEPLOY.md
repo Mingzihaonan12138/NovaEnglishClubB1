@@ -21,7 +21,16 @@
 
 ---
 
-## 还剩三步
+## 已上线
+
+**https://nova-english-b1.vercel.app**
+
+Google 登录已开启，该域名已加进 Firebase 授权域名。实测页面正常渲染、控制台无报错。
+Vercel 项目 `yu24/nova-english-b1`，重新部署就是在仓库目录跑 `npx vercel --prod`。
+
+---
+
+## 下面这三步都已完成，留作记录
 
 ### 1. 打开 Google 登录（控制台，约 30 秒）
 
