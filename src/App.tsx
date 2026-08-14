@@ -39,9 +39,8 @@ import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocum
 
 /**
  * One colour per deck, so a card back is recognisable before it is turned over.
- * Derived from the topic name so a newly added topic gets a stable colour with
- * no extra configuration. The colour only ever appears on card backs and deck
- * covers, never in the answering view.
+ * The colour only ever appears on card backs and deck covers, never in the
+ * answering view.
  */
 /**
  * Reads a block of pasted text into question/answer pairs.
@@ -133,11 +132,6 @@ const DECK_COLOURS = [
   '#2c3d6e', // indigo, deepened
   '#a8791f', // gold, deepened
 ];
-function deckColour(topic: string): string {
-  let h = 0;
-  for (let i = 0; i < topic.length; i++) h = (h * 31 + topic.charCodeAt(i)) >>> 0;
-  return DECK_COLOURS[h % DECK_COLOURS.length];
-}
 
 export default function App() {
   // Starts empty rather than at a constant's first entry, which was the name of
@@ -529,6 +523,18 @@ export default function App() {
 
   const part1Decks = decksFor('Part 1');
   const part2Decks = decksFor('Part 2');
+
+  /**
+   * Colours are handed out by position, not by hashing the topic name. Hashing
+   * gave three decks the same gold because a hash has no reason to avoid
+   * collisions; there are as many colours as decks, so position guarantees each
+   * deck a different one.
+   */
+  const deckOrder = [...part1Decks, ...part2Decks].map(d => d.topic);
+  const deckColour = (topic: string) => {
+    const i = deckOrder.indexOf(topic);
+    return DECK_COLOURS[(i < 0 ? 0 : i) % DECK_COLOURS.length];
+  };
 
   const startRecordingFor = (q: QuestionAnswer) => {
     setCurrentQuestion(q);

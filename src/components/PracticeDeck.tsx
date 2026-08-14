@@ -127,7 +127,7 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '
  * session sink back and desaturate in the order they were taken. The pull toward
  * the right card is visible instead of hidden in a probability.
  */
-const SPACING = 26;   // px between spines: cards mostly hide each other
+const SPACING = 36;   // px between spines: cards still overlap, but read as separate
 const TURN = 66;      // every card sits at this angle; none of them face you
 const LIFT = 70;      // how far the card under the cursor rises out of the row
 /**
@@ -329,13 +329,14 @@ function CrateCard({
           className="w-full h-full rounded-[1.1rem] relative"
           style={{ transformStyle: 'preserve-3d' }}
           animate={{
-            // Every card leans the same way, as records lean in a crate. Turning
-            // the halves of the row toward each other put two opposing
-            // perspectives side by side, which read as a mistake. Only the card
-            // being taken turns flat, arriving face-on as it becomes the question.
-            rotateY: isRising ? 0 : -TURN,
-            y: isRising ? -210 : isCentre ? -LIFT : 0,
-            scale: isRising ? 1.08 : isCentre ? 1.05 : 0.94,
+            // Every card keeps the same lean, including the one being taken:
+            // it is drawn straight up out of the queue the way you pull a record
+            // from a crate. Turning it flat here made it stop being a card in a
+            // row and become a different object mid-animation; the turn belongs
+            // to the flip that follows, where it becomes the question.
+            rotateY: -TURN,
+            y: isRising ? -260 : isCentre ? -LIFT : 0,
+            scale: isRising ? 1.04 : isCentre ? 1.05 : 0.94,
             opacity: dimmed ? 0.18 : fresh ? 1 : 1 - age * 0.5,
             filter: fresh
               ? `saturate(1) brightness(${isCentre || isRising ? 1.1 : 0.82})`
