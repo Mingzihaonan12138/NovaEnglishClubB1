@@ -42,6 +42,69 @@ import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocum
  * no extra configuration. The colour only ever appears on card backs and deck
  * covers, never in the answering view.
  */
+/**
+ * Reads a block of pasted text into question/answer pairs.
+ *
+ * The teacher writes this material in a document, not in a JSON editor, so the
+ * import has to accept what a copy-paste actually looks like. Two shapes cover
+ * nearly everything people type:
+ *
+ *   一行一题     What are her hobbies? | Dressing up and shopping.
+ *   问答分行     What are her hobbies?
+ *                Dressing up and shopping.
+ *                (blank line between questions)
+ *
+ * Leading numbering like "1." or "3、" is stripped, because prepared lists
+ * almost always carry it. JSON still parses, so anything exported earlier keeps
+ * working.
+ */
+function parsePastedQuestions(raw: string): { question: string; answer: string }[] {
+  const text = (raw || '').trim();
+  if (!text) return [];
+
+  // Anything previously exported from this app.
+  try {
+    const json = JSON.parse(text);
+    if (Array.isArray(json)) {
+      return json
+        .filter(o => o && typeof o.question === 'string')
+        .map(o => ({ question: o.question.trim(), answer: (o.suggestedAnswer || '').trim() }));
+    }
+    if (json && typeof json === 'object') {
+      return Object.entries(json).map(([q, a]) => ({ question: q.trim(), answer: String(a).trim() }));
+    }
+  } catch {
+    // Not JSON, which is the normal case.
+  }
+
+  const strip = (s: string) => s.replace(/^\s*(?:\d+\s*[.、)．]|[-*•])\s*/, '').trim();
+  const SEP = /\s*[|｜\t]\s*/;
+
+  const lines = text.split(/\r?\n/);
+  const nonEmpty = lines.filter(l => l.trim());
+  const withSep = nonEmpty.filter(l => SEP.test(l)).length;
+
+  // If most lines carry a separator, every line is its own pair.
+  if (withSep >= Math.ceil(nonEmpty.length / 2)) {
+    return nonEmpty
+      .map(l => {
+        const [q, ...rest] = l.split(SEP);
+        return { question: strip(q), answer: rest.join(' ').trim() };
+      })
+      .filter(p => p.question);
+  }
+
+  // Otherwise blank lines separate questions: first line asks, the rest answers.
+  return text
+    .split(/\n\s*\n/)
+    .map(block => {
+      const rows = block.split(/\r?\n/).map(r => r.trim()).filter(Boolean);
+      if (!rows.length) return null;
+      return { question: strip(rows[0]), answer: rows.slice(1).join(' ').trim() };
+    })
+    .filter((p): p is { question: string; answer: string } => !!p && !!p.question);
+}
+
 /** The Express side of this app only exists when running it locally. */
 const isLocalDev =
   typeof window !== 'undefined' &&
@@ -181,6 +244,7 @@ export default function App() {
   const [importType, setImportType] = useState<'part1' | 'part2'>('part1');
   const [importJson, setImportJson] = useState("");
   const [newTopicName, setNewTopicName] = useState("");
+  const [importTopicName, setImportTopicName] = useState("");
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importError, setImportError] = useState("");
 
@@ -640,52 +704,86 @@ export default function App() {
   const handleImportPreview = () => {
     setImportError("");
     try {
-      const parsed = JSON.parse(importJson);
+      const pairs = parsePastedQuestions(importJson);
+      if (!pairs.length) throw new Error("没认出题目。每题一行「问题 | 答案」，或者问题一行、答案下一行、题之间空一行。");
+
       if (importType === 'part1') {
-        if (!Array.isArray(parsed)) throw new Error("Expected an array of question objects");
-        if (parsed.length > 0 && (!parsed[0].id || !parsed[0].question)) {
-          throw new Error("Invalid format. Expected: [{id: '...', question: '...', suggestedAnswer: '...'}]");
-        }
-      } else {
-        if (typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error("Expected a JSON object (Topic-to-Answers map)");
-        // Example: { "QuestionId": "Personal Answer" }
+        setImportPreview(pairs.map(p => ({
+          id: newQuestionId('p1'),
+          question: p.question,
+          suggestedAnswer: p.answer,
+        })));
+        return;
       }
-      setImportPreview(Array.isArray(parsed) ? parsed : Object.entries(parsed));
+
+      // Part 2 questions are shared, so a pasted answer has to find the question
+      // it belongs to. Match on the text rather than asking the teacher to hunt
+      // for question ids.
+      const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9一-鿿]+/g, '');
+      const pool = displayQuestions.filter(q => q.section !== 'Part 1');
+      const matched = pairs.map(p => {
+        const key = norm(p.question);
+        const hit = pool.find(q => norm(q.question) === key)
+                 || pool.find(q => norm(q.question).startsWith(key) && key.length > 12);
+        return { id: hit?.id, topic: hit?.topic, question: p.question, suggestedAnswer: p.answer, matched: !!hit };
+      });
+      const misses = matched.filter(m => !m.matched).length;
+      if (misses === matched.length) {
+        throw new Error("这些问题在 Part 2 题库里都找不到。Part 2 的题目是共享的，粘贴时问题文字要和题库里的一致。");
+      }
+      setImportPreview(matched);
     } catch (e: any) {
-      setImportError(e.message || "Invalid JSON format");
+      setImportError(e.message || "看不懂粘贴的内容");
       setImportPreview([]);
     }
   };
 
   const executeImport = async () => {
     if (!selectedStudentId || !importPreview.length) return;
-    
+
     try {
       if (importType === 'part1') {
+        const topicName = (importTopicName || selectedTopic).trim();
+        if (!topicName) throw new Error("先给这个话题起个名字。");
+
+        // Append rather than replace: a teacher pasting a second batch into an
+        // existing topic means "and also these", not "throw the others away".
+        const existing = userTopics.find(t => t.topicName === topicName)?.questions || [];
         await saveUserTopic({
           userId: selectedStudentId,
-          topicName: selectedTopic,
-          questions: importPreview
+          topicName,
+          questions: [...existing, ...importPreview],
         });
+        setSelectedTopic(topicName);
       } else {
-        // Find existing or start new
-        const answers: Record<string, string> = {};
-        importPreview.forEach(([id, ans]) => {
-          answers[id] = ans;
-        });
-        
-        await savePersonalizedConversation({
-          userId: selectedStudentId,
-          topicName: selectedTopic,
-          answers: answers
-        });
+        // Answers are stored per topic, and one paste can span several, so group
+        // them before writing.
+        const byTopic = new Map<string, Record<string, string>>();
+        importPreview
+          .filter((m: any) => m.matched)
+          .forEach((m: any) => {
+            const bag = byTopic.get(m.topic) || {};
+            bag[m.id] = m.suggestedAnswer;
+            byTopic.set(m.topic, bag);
+          });
+
+        for (const [topicName, answers] of byTopic) {
+          const prev = userConvs.find(c => c.topicName === topicName)?.answers || {};
+          await savePersonalizedConversation({
+            userId: selectedStudentId,
+            topicName,
+            answers: { ...prev, ...answers },
+          });
+        }
       }
+
       setShowImportModal(false);
       setImportJson("");
       setImportPreview([]);
-      alert("Import Successful!");
+      setImportTopicName("");
+      alert("导入完成。");
     } catch (e: any) {
-      alert("Import Failed: " + e.message);
+      alert("导入失败：" + e.message);
     }
   };
 
@@ -1270,7 +1368,7 @@ export default function App() {
                                   <button onClick={() => {
                                     setImportType('part1');
                                     setShowImportModal(true);
-                                  }} className="text-[10px] font-bold text-blue-600 hover:underline">Import JSON</button>
+                                  }} className="text-[10px] font-bold text-blue-600 hover:underline">批量粘贴</button>
                                 </div>
                               </div>
                               {/*
@@ -1426,7 +1524,7 @@ export default function App() {
                                 <button onClick={() => {
                                   setImportType('part2');
                                   setShowImportModal(true);
-                                }} className="text-[10px] font-bold text-blue-600 hover:underline">Import JSON</button>
+                                }} className="text-[10px] font-bold text-blue-600 hover:underline">批量粘贴</button>
                               </div>
                               <div className="space-y-4 max-h-[570px] overflow-y-auto pr-2 scrollbar-thin">
                                 {TRINITY_B1_TOPICS.slice(5).map(topic => (
@@ -2766,8 +2864,14 @@ export default function App() {
             >
               <div className="p-8 border-b flex items-center justify-between">
                 <div>
-                  <h3 className="text-xl font-bold font-display">Batch Import JSON ({importType === 'part1' ? 'Part 1: Questions + Answers' : 'Part 2: Personal Answers'})</h3>
-                  <p className="text-neutral-500 text-sm">Target Topic: <span className="font-bold text-neutral-900">{selectedTopic}</span></p>
+                  <h3 className="text-xl font-bold font-display">
+                    {importType === 'part1' ? '批量粘贴题目和答案' : '批量粘贴 Part 2 的答案'}
+                  </h3>
+                  <p className="text-neutral-500 text-sm">
+                    {importType === 'part1'
+                      ? '从你的备课文档直接复制过来就行，不用整理格式。'
+                      : '按问题原文对应，对不上的会跳过不覆盖。'}
+                  </p>
                 </div>
                 <button onClick={() => setShowImportModal(false)} className="p-2 hover:bg-neutral-100 rounded-full"><X /></button>
               </div>
@@ -2775,58 +2879,80 @@ export default function App() {
               <div className="flex-1 overflow-y-auto p-8 grid grid-cols-1 md:grid-cols-2 gap-8">
                 <div className="space-y-4">
                   <div>
-                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2 block">JSON Data</label>
-                    <textarea 
+                    <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2 block">粘贴到这里</label>
+                    <textarea
                       value={importJson}
                       onChange={(e) => setImportJson(e.target.value)}
-                      placeholder="Paste your JSON here..."
-                      className="w-full h-[300px] p-4 font-mono text-xs border border-neutral-200 rounded-2xl outline-none focus:border-black"
+                      placeholder={"What do you do?\nI'm a nurse at a hospital.\n\nWhere do you work?\nI work at Bolton Hospital."}
+                      className="w-full h-[300px] p-4 text-xs leading-relaxed border border-neutral-200 rounded-2xl outline-none focus:border-black"
                     />
                   </div>
-                  <div className="bg-neutral-50 p-4 rounded-2xl border border-neutral-100">
-                    <h5 className="text-[10px] font-black uppercase text-neutral-400 mb-2">Example Format</h5>
-                    <pre className="text-[10px] text-neutral-500 overflow-x-auto">
-                      {importType === 'part1' ? 
-                        JSON.stringify([
-                          { id: "topic_q1", question: "Describe your family member.", suggestedAnswer: "I would like to talk about my daughter..." },
-                          { id: "topic_q2", question: "What do you do together?", suggestedAnswer: "We often go to the park..." }
-                        ], null, 2) :
-                        JSON.stringify({
-                          "festivals_q1": "I love Spring Festival because we have big dinners.",
-                          "festivals_q2": "Last year I visited my grandmother in Beijing."
-                        }, null, 2)
-                      }
-                    </pre>
+                  <div className="bg-neutral-50 p-4 rounded-2xl border border-neutral-100 space-y-3">
+                    <p className="text-[10px] font-black uppercase text-neutral-400">两种写法都认，混着也行</p>
+                    <div>
+                      <p className="text-[10px] font-bold text-neutral-500 mb-1">一行一题，中间加竖线</p>
+                      <pre className="text-[10px] text-neutral-500 whitespace-pre-wrap">{`What do you do? | I'm a nurse.
+Where do you work? | At Bolton Hospital.`}</pre>
+                    </div>
+                    <div>
+                      <p className="text-[10px] font-bold text-neutral-500 mb-1">问答分行，题之间空一行</p>
+                      <pre className="text-[10px] text-neutral-500 whitespace-pre-wrap">{`What do you do?
+I'm a nurse.
+
+Where do you work?
+At Bolton Hospital.`}</pre>
+                    </div>
+                    <p className="text-[10px] text-neutral-400">
+                      开头的「1.」「2、」会自动去掉。只有问题、没有答案也可以，答案之后再补。
+                    </p>
                   </div>
-                  <button 
+                  {importType === 'part1' && (
+                    <input
+                      value={importTopicName || selectedTopic}
+                      onChange={(e) => setImportTopicName(e.target.value)}
+                      placeholder="这批题放进哪个话题？例如 My job"
+                      className="w-full p-3 bg-white border border-neutral-200 rounded-xl text-sm font-bold"
+                    />
+                  )}
+                  <button
                     onClick={handleImportPreview}
                     className="w-full py-3 bg-neutral-900 text-white font-bold rounded-xl text-sm"
                   >
-                    Preview Import
+                    看看认出几题
                   </button>
-                  {importError && <p className="text-xs text-red-500 font-bold">{importError}</p>}
+                  {importError && <p className="text-xs text-red-500 font-bold leading-relaxed">{importError}</p>}
                 </div>
 
                 <div className="space-y-4">
-                  <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2 block">Preview ({importPreview.length} items)</label>
+                  <label className="text-[10px] font-black uppercase tracking-widest text-neutral-400 mb-2 block">
+                    认出 {importPreview.length} 题
+                    {importType === 'part2' && importPreview.length > 0 &&
+                      `，其中 ${importPreview.filter((m: any) => m.matched).length} 题对上了题库`}
+                  </label>
                   <div className="border border-neutral-100 rounded-2xl h-[450px] overflow-y-auto p-4 space-y-3 bg-neutral-50/50">
                     {importPreview.length === 0 ? (
-                      <div className="h-full flex items-center justify-center text-neutral-300 italic text-sm text-center">
-                        Click Preview to see data
+                      <div className="h-full flex items-center justify-center text-neutral-300 italic text-sm text-center px-6">
+                        粘贴之后点左边的按钮，这里会显示识别结果
                       </div>
-                    ) : importType === 'part1' ? (
-                      importPreview.map((p, i) => (
-                        <div key={i} className="p-3 bg-white rounded-xl border border-neutral-200 shadow-sm text-xs">
-                          <p className="font-bold mb-1 text-blue-600">ID: {p.id}</p>
-                          <p className="text-neutral-900 font-bold mb-1">Q: {p.question}</p>
-                          <p className="italic text-neutral-500 bg-neutral-50 p-2 rounded-lg mt-2">A: {p.suggestedAnswer}</p>
-                        </div>
-                      ))
                     ) : (
-                      importPreview.map(([id, ans], i) => (
-                        <div key={i} className="p-3 bg-white rounded-xl border border-neutral-200 shadow-sm text-xs">
-                          <p className="font-bold mb-1 text-blue-600">Question ID: {id}</p>
-                          <p className="italic text-neutral-800 bg-neutral-50 p-2 rounded-lg">Response: {ans}</p>
+                      importPreview.map((p: any, i: number) => (
+                        <div
+                          key={i}
+                          className={`p-3 rounded-xl border shadow-sm text-xs ${
+                            importType === 'part2' && !p.matched
+                              ? 'bg-red-50 border-red-200'
+                              : 'bg-white border-neutral-200'
+                          }`}
+                        >
+                          <p className="text-neutral-900 font-bold mb-1">{p.question}</p>
+                          {p.suggestedAnswer
+                            ? <p className="italic text-neutral-500 bg-neutral-50 p-2 rounded-lg mt-2">{p.suggestedAnswer}</p>
+                            : <p className="text-neutral-300 mt-1">（没有答案，之后再补）</p>}
+                          {importType === 'part2' && (
+                            <p className={`mt-2 font-bold ${p.matched ? 'text-neutral-400' : 'text-red-600'}`}>
+                              {p.matched ? `对上了：${p.topic}` : '题库里找不到这道题，会跳过'}
+                            </p>
+                          )}
                         </div>
                       ))
                     )}
