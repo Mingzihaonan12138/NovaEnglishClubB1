@@ -1,10 +1,10 @@
 {
-  "projectId": "gen-lang-client-0538041967",
-  "appId": "1:495570066780:web:cfbebb1440bb63f85a7599",
-  "apiKey": "AIzaSyCd60x-KjxfH0ZHyQb9_sEogfB5PywtYN4",
-  "authDomain": "gen-lang-client-0538041967.firebaseapp.com",
+  "projectId": "nova-english-b1",
+  "appId": "1:481118049670:web:6adefc17190e0964164807",
+  "apiKey": "AIzaSyAlBgmyIfjFPfIGdhTRYffjfg0lMsxNJjc",
+  "authDomain": "nova-english-b1.firebaseapp.com",
   "firestoreDatabaseId": "(default)",
-  "storageBucket": "gen-lang-client-0538041967.firebasestorage.app",
-  "messagingSenderId": "495570066780",
+  "storageBucket": "nova-english-b1.firebasestorage.app",
+  "messagingSenderId": "481118049670",
   "measurementId": ""
 }
