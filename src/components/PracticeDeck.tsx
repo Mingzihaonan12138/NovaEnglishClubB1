@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion, useMotionValue, useSpring, useTransform } from 'motion/react';
+import type { MotionValue } from 'motion/react';
 import { Volume2, X, Mic, Square, Bookmark, Loader2, ChevronRight } from 'lucide-react';
 import { QuestionAnswer } from '../constants';
 import { StarMascot } from './Mascot';
@@ -67,6 +68,146 @@ function pickWeighted(
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
+/**
+ * The crate: every card in the deck stood on its edge, the way records sit in a
+ * box. Moving across the strip walks the row, and whichever card reaches the
+ * middle turns to face you.
+ *
+ * The student picks rather than being dealt to. Weighting has not disappeared,
+ * it has moved onto the cards themselves: never-practised cards stay bright and
+ * upright, ones already done recede and dim in the order they were taken. The
+ * pull toward the right card is something you can see instead of something the
+ * machine does behind your back.
+ */
+const SPACING = 42;       // px between card spines
+const MAX_TURN = 74;      // degrees a card is turned away at the edges
+
+function CardCrate({
+  questions, cardState, order, onPick,
+}: {
+  questions: QuestionAnswer[];
+  cardState: Record<string, DeckCardState>;
+  order: string[];
+  onPick: (q: QuestionAnswer) => void;
+}) {
+  const reduce = useReducedMotion();
+  const wrap = useRef<HTMLDivElement>(null);
+  const raw = useMotionValue((questions.length - 1) / 2);
+  const focus = useSpring(raw, { stiffness: 210, damping: 30, mass: 0.5 });
+  const [centre, setCentre] = useState(Math.round((questions.length - 1) / 2));
+
+  useEffect(() => {
+    const unsub = focus.on('change', v => setCentre(Math.round(v)));
+    return () => unsub();
+  }, [focus]);
+
+  const track = (clientX: number) => {
+    const el = wrap.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const t = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
+    raw.set(t * (questions.length - 1));
+  };
+
+  return (
+    <div className="w-full">
+      <div
+        ref={wrap}
+        onPointerMove={(e) => track(e.clientX)}
+        onPointerDown={(e) => track(e.clientX)}
+        className="relative h-[26rem] w-full cursor-ew-resize touch-pan-y"
+        style={{ perspective: 1400 }}
+      >
+        {questions.map((q, i) => {
+          const st = cardState[q.id];
+          const done = order.indexOf(q.id);
+          const fresh = !st?.lastPractisedAt && done === -1;
+          // Cards taken earlier in this session fade furthest back.
+          const age = done === -1 ? 0 : (order.length - done) / order.length;
+
+          // key sits on a wrapper because this project has no @types/react, so
+          // TypeScript does not know key is a reserved JSX attribute and would
+          // demand it be declared as a prop.
+          return (
+            <div key={q.id} style={{ display: 'contents' }}>
+              <CrateCard
+                index={i}
+                focus={focus}
+                isCentre={i === centre}
+                fresh={fresh}
+                marked={!!st?.marked}
+                age={age}
+                reduce={!!reduce}
+                onPick={() => onPick(q)}
+              />
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="flex items-center justify-center gap-5 mt-1 text-xs text-muted">
+        <span className="inline-flex items-center gap-1.5">
+          <i className="w-2.5 h-2.5 rounded-sm" style={{ background: 'var(--color-gold)' }} />
+          没练过
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <i className="w-2.5 h-2.5 rounded-sm bg-muted opacity-40" />
+          练过的往后退
+        </span>
+        <span>左右移动鼠标翻牌，点中间那张抽出来</span>
+      </div>
+    </div>
+  );
+}
+
+interface CrateCardProps {
+  index: number;
+  focus: MotionValue<number>;
+  isCentre: boolean;
+  fresh: boolean;
+  marked: boolean;
+  age: number;
+  reduce: boolean;
+  onPick: () => void;
+}
+
+function CrateCard({
+  index, focus, isCentre, fresh, marked, age, reduce, onPick,
+}: CrateCardProps) {
+  const d = useTransform(focus, (f: number) => index - f);
+  const x = useTransform(d, (v: number) => v * SPACING);
+  const rotateY = useTransform(d, (v: number) =>
+    Math.sign(v) * Math.min(Math.abs(v) * 26, MAX_TURN));
+  const scale = useTransform(d, (v: number) => 1 - Math.min(Math.abs(v) * 0.06, 0.34));
+  const z = useTransform(d, (v: number) => -Math.abs(v) * 34);
+  const opacity = useTransform(d, (v: number) => 1 - Math.min(Math.abs(v) * 0.13, 0.68));
+
+  return (
+    <motion.button
+      onClick={onPick}
+      aria-label={isCentre ? '抽这张' : '移到这张'}
+      className="absolute left-1/2 top-1/2 w-[15rem] h-[20rem] -ml-[7.5rem] -mt-[10rem] rounded-[1.4rem] origin-center"
+      style={{
+        x, rotateY, scale, z, opacity,
+        zIndex: isCentre ? 60 : 30 - Math.abs(index),
+        transformStyle: 'preserve-3d',
+        background: fresh ? 'var(--color-blue)' : 'var(--color-sand)',
+        filter: age ? `grayscale(${0.25 + age * 0.5})` : undefined,
+        boxShadow: isCentre ? '0 18px 44px rgba(34,30,26,.18)' : 'none',
+        transition: reduce ? 'none' : undefined,
+      }}
+    >
+      <div className="absolute inset-2 rounded-[1.05rem] border border-white/20 pointer-events-none" />
+      <div className="w-full h-full flex items-center justify-center pointer-events-none">
+        <StarMascot className="w-24 h-24" />
+      </div>
+      {marked && (
+        <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-gold pointer-events-none" />
+      )}
+    </motion.button>
+  );
+}
+
 export default function PracticeDeck({
   deckName, deckColor, questions, cardState,
   onToggleMark, onSpeak, onExit,
@@ -80,20 +221,32 @@ export default function PracticeDeck({
   const [showHint, setShowHint] = useState(false);
   const [showAnswer, setShowAnswer] = useState(false);
   const [drawn, setDrawn] = useState(0);
+  /** Browsing the crate, as opposed to working on a card already taken. */
+  const [picking, setPicking] = useState(true);
+  /** Ids in the order they were taken this session, oldest first. */
+  const [order, setOrder] = useState<string[]>([]);
   const historyRef = useRef<QuestionAnswer[]>([]);
 
   const state = current ? cardState[current.id] : undefined;
 
+  /** Back to the crate so the student chooses the next one themselves. */
   const deal = useCallback(() => {
-    const next = pickWeighted(questions, cardState, current?.id);
-    if (!next) return;
     if (current) historyRef.current.push(current);
-    setCurrent(next);
+    setPicking(true);
+    setRevealed(false);
+    setShowHint(false);
+    setShowAnswer(false);
+  }, [current]);
+
+  const pick = useCallback((q: QuestionAnswer) => {
+    setCurrent(q);
+    setPicking(false);
     setRevealed(false);
     setShowHint(false);
     setShowAnswer(false);
     setDrawn(d => d + 1);
-  }, [questions, cardState, current]);
+    setOrder(prev => [...prev.filter(id => id !== q.id), q.id]);
+  }, []);
 
   const back = useCallback(() => {
     const prev = historyRef.current.pop();
@@ -110,7 +263,6 @@ export default function PracticeDeck({
     onSpeak(current);
   }, [revealed, current, onSpeak]);
 
-  useEffect(() => { if (!current && questions.length) deal(); }, [current, questions, deal]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -165,7 +317,16 @@ export default function PracticeDeck({
         </p>
       )}
 
-      <div className="relative" style={{ perspective: 1200 }}>
+      {picking && (
+        <CardCrate
+          questions={questions}
+          cardState={cardState}
+          order={order}
+          onPick={pick}
+        />
+      )}
+
+      <div className={`relative ${picking ? 'hidden' : ''}`} style={{ perspective: 1200 }}>
         <motion.div
           key={current?.id}
           drag={revealed ? 'x' : false}
@@ -259,7 +420,7 @@ export default function PracticeDeck({
       {/* One primary action. Nothing competes with it. */}
       {/* min-h rather than a fixed height: the buttons below are taller than
           the grey text they replaced, and a fixed 6rem clipped them. */}
-      <div className="mt-8 min-h-[9rem] flex flex-col items-center gap-3">
+      <div className={`mt-8 min-h-[9rem] flex flex-col items-center gap-3 ${picking ? 'hidden' : ''}`}>
         {!revealed ? (
           <p className="text-sm text-muted">点一下翻开</p>
         ) : isRecording ? (
