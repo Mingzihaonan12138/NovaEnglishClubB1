@@ -40,7 +40,8 @@ const GAZE_REACH = 210;
 export function StarMascot({
   className = '',
   followPointer = false,
-}: { className?: string; followPointer?: boolean }) {
+  fill = GOLD,
+}: { className?: string; followPointer?: boolean; fill?: string }) {
   const ref = useRef<SVGSVGElement>(null);
   const reduce = useReducedMotion();
 
@@ -75,7 +76,7 @@ export function StarMascot({
   return (
     <svg ref={ref} viewBox="0 0 259.66 249.7" className={className} role="img" aria-label="Nova English Club mascot">
       <path
-        fill={GOLD}
+        fill={fill}
         d="M70.47,89.15c-11.68,4.93-17.61,19.8-3.49,31.37,5.55,4.54,13.13,6.98,16.79,13.15,5.39,9.11-1.82,20.83.26,31.21,1.1,5.48,4.92,10.29,9.9,12.82s11.01,2.8,16.29.95c9.69-3.39,16.96-13.41,27.23-13.59,8.6-.15,15.78,6.82,24.28,8.09,5.38.81,11.08-.85,15.19-4.42s6.54-8.99,6.48-14.43c-.09-8.54-5.92-16.65-4.32-25.04,1.23-6.46,6.52-11.23,10.04-16.79,4.17-6.59,5.83-15.26,2.4-22.27-3.48-7.1-11.42-11.08-19.25-12.22-5.58-.81-11.63-.53-16.37-3.57-8.77-5.64-8.17-19-14.94-26.94-3.52-4.13-9.05-6.48-14.47-6.14s-10.61,3.35-13.6,7.89c-3.96,6.02-3.89,13.85-6.93,20.39-2.72,5.84-7.85,10.36-13.66,13.13-3.65,1.74-7.57,2.84-11.55,3.49-3.33.54-6.19,1.29-10.28,2.93"
       />
       <g data-part="eye-right">

@@ -111,7 +111,22 @@ const isLocalDev =
   typeof window !== 'undefined' &&
   ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
-const DECK_COLOURS = ['#455da3', '#7a8c4e', '#b4693a', '#6d7f96', '#8a6aa1', '#a8794e'];
+/**
+ * Every deck colour is the brand's gold or indigo, or one of them shifted in
+ * value. The previous set was five invented mid-tones — olive, rust, slate,
+ * mauve, tan — none of them from the logo and all of similar lightness, which
+ * on a cream page came out drab and unrelated to the product.
+ *
+ * Ordered so that adjacent decks differ in lightness as well as hue.
+ */
+const DECK_COLOURS = [
+  '#e5bb40', // brand gold
+  '#445da3', // brand indigo
+  '#221e1a', // brand ink
+  '#8ba3e0', // indigo, lifted
+  '#a8791f', // gold, deepened
+  '#2c3d6e', // indigo, deepened
+];
 function deckColour(topic: string): string {
   let h = 0;
   for (let i = 0; i < topic.length; i++) h = (h * 31 + topic.charCodeAt(i)) >>> 0;

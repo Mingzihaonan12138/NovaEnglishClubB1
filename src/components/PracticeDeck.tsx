@@ -32,6 +32,62 @@ interface PracticeDeckProps {
   canSubmit: boolean;
 }
 
+/**
+ * The printed back of a card, used both by the cards in the row and by the one
+ * that has been drawn, so they are visibly the same object.
+ *
+ * A flat rectangle with a hairline was not reading as a card: a card back is a
+ * printed thing, and printing is what tells you it is a card rather than a
+ * coloured shape. The star is large enough to survive being seen almost
+ * edge-on, and the double rule gives the eye an edge to catch at any angle.
+ */
+/** Relative luminance, for deciding whether a card prints light-on-dark or the reverse. */
+function isLight(hex: string): boolean {
+  const h = hex.replace('#', '');
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
+  const f = (v: number) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b) > 0.33;
+}
+
+function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: string; radius?: string; followPointer?: boolean }) {
+  // The gold deck is the same colour as the star, so a gold star on it would be
+  // an invisible mark on a blank rectangle. Light cards print in ink instead.
+  const light = isLight(color);
+  const rule = light ? 'border-black/20' : 'border-white/25';
+  const ruleFaint = light ? 'border-black/10' : 'border-white/12';
+  const dot = light ? 'bg-black/20' : 'bg-white/30';
+  const ring = light ? 'border-black/15' : 'border-white/20';
+  const star = light ? '#221e1a' : '#e5bb40';
+  const leadEdge = light ? 'bg-white/60' : 'bg-white/45';
+
+  return (
+    <div className="absolute inset-0 overflow-hidden" style={{ background: color, borderRadius: radius }}>
+      {/* Printed frame */}
+      <div className={`absolute inset-[6%] rounded-[0.75rem] border ${rule} pointer-events-none`} />
+      <div className={`absolute inset-[9%] rounded-[0.6rem] border ${ruleFaint} pointer-events-none`} />
+
+      {/* The mark, big enough to read foreshortened */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="relative w-[62%] aspect-square flex items-center justify-center">
+          <div className={`absolute inset-0 rounded-full border ${ring}`} />
+          <StarMascot className="w-[76%] h-[76%] drop-shadow-sm" followPointer={followPointer} fill={star} />
+        </div>
+      </div>
+
+      {/* Corner marks, so the print continues to the edges rather than floating */}
+      {['top-[7%] left-[7%]', 'top-[7%] right-[7%]', 'bottom-[7%] left-[7%]', 'bottom-[7%] right-[7%]'].map(pos => (
+        <span key={pos} className={`absolute ${pos} w-1.5 h-1.5 rounded-full ${dot} pointer-events-none`} />
+      ))}
+
+      {/* Paper edges: lit on the leading side, shaded on the trailing one, which
+          is what separates one card from the next when they share a colour. */}
+      <div className={`absolute inset-y-0 left-0 w-[3px] ${leadEdge} pointer-events-none`} />
+      <div className="absolute inset-y-0 right-0 w-[3px] bg-black/25 pointer-events-none" />
+      <div className="absolute inset-0 pointer-events-none" style={{ borderRadius: radius, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.22)' }} />
+    </div>
+  );
+}
+
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
 /**
@@ -45,11 +101,11 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '
  * session sink back and desaturate in the order they were taken. The pull toward
  * the right card is visible instead of hidden in a probability.
  */
-const SPACING = 34;   // px between spines
+const SPACING = 42;   // px between spines
 const TURN = 66;      // every card sits at this angle; none of them face you
-const LIFT = 54;      // how far the card under the cursor rises out of the row
+const LIFT = 70;      // how far the card under the cursor rises out of the row
 /** Cards near the cursor slide aside, opening a gap around the one in focus. */
-const PART = 46;
+const PART = 62;
 
 function CardCrate({
   questions, cardState, order, deckColor, onPick,
@@ -125,9 +181,26 @@ function CardCrate({
         onClick={() => { const q = questions[centre]; if (q) take(q); }}
         role="button"
         aria-label={`抽出第 ${centre + 1} 张，共 ${questions.length} 张`}
-        className="relative h-[24rem] w-full cursor-pointer touch-pan-y"
-        style={{ perspective: 1500 }}
+        className="relative h-[30rem] w-full cursor-pointer touch-pan-y"
+        style={{ perspective: 1700 }}
       >
+        {/* Something to stand on. The row was floating in an empty page, which
+            is most of why it looked unfinished: a lit patch of table and a
+            contact shadow under the cards give the deck somewhere to be. */}
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: 'radial-gradient(60% 44% at 50% 58%, rgba(34,30,26,.07) 0%, rgba(34,30,26,0) 70%)',
+          }}
+        />
+        <div
+          className="absolute left-1/2 -translate-x-1/2 pointer-events-none"
+          style={{
+            bottom: '4.5rem', width: '30rem', height: '3.5rem', borderRadius: '50%',
+            background: 'radial-gradient(50% 50% at 50% 50%, rgba(34,30,26,.22) 0%, rgba(34,30,26,0) 72%)',
+            filter: 'blur(6px)',
+          }}
+        />
         {questions.map((q, i) => {
           const st = cardState[q.id];
           const done = order.indexOf(q.id);
@@ -196,63 +269,50 @@ function CrateCard({
   const d = useTransform(focus, (f: number) => index - f);
   // The row parts around the cursor so that one card is legible among cards of
   // a single colour. tanh rather than sign: sign flips the whole PART term the
-  // instant d crosses zero, which threw a card 92px across the centre line in
-  // one frame. tanh gives the same widening either side and passes smoothly
-  // through the middle.
+  // instant d crosses zero, which threw a card across the centre line in one
+  // frame. tanh gives the same widening either side and passes through smoothly.
   const x = useTransform(d, (v: number) => v * SPACING + PART * Math.tanh(v / 1.2));
-  const z = useTransform(d, (v: number) => -Math.abs(v) * 30);
+  const z = useTransform(d, (v: number) => -Math.abs(v) * 34);
+  // Real depth of field: distant cards go soft. Without it the row reads flat
+  // however far back the cards are placed, because nothing says "further away"
+  // as plainly as being out of focus.
+  const blur = useTransform(d, (v: number) => `blur(${Math.min(Math.abs(v) * 0.9, 3.4)}px)`);
 
   return (
     // Position is a motion value and lives on the outside; the turn is animated
     // and lives on the inside, so taking a card can rotate it without fighting
     // the value that places it.
     <motion.div
-      className="absolute left-1/2 top-1/2 w-[13rem] h-[18rem] -ml-[6.5rem] -mt-[9rem]"
-      style={{ x, z, transformStyle: 'preserve-3d', zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index) }}
+      className="absolute left-1/2 top-1/2 w-[16rem] h-[22rem] -ml-[8rem] -mt-[11rem]"
+      style={{ x, z, filter: blur, transformStyle: 'preserve-3d', zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index) }}
     >
-      <div
-        className="w-full h-full rounded-[1.1rem] relative"
-        style={{ pointerEvents: 'none' }}
-      >
-      <motion.div
-        className="w-full h-full rounded-[1.1rem] relative"
-        style={{ background: deckColor, transformStyle: 'preserve-3d' }}
-        animate={{
-          // Every card leans the same way, the way records lean in a crate.
-          // Turning one side of the row to face the other produced two opposing
-          // perspectives meeting in the middle, which read as a broken drawing.
-          // The only card that ever turns flat is the one being taken, and it
-          // turns as it leaves, arriving face-on to match the card it becomes.
-          rotateY: isRising ? 0 : -TURN,
-          y: isRising ? -180 : isCentre ? -LIFT : 0,
-          scale: isRising ? 1.1 : isCentre ? 1.06 : 0.97,
-          opacity: dimmed ? 0.2 : fresh ? 1 : 1 - age * 0.5,
-          filter: fresh
-            ? `saturate(1) brightness(${isCentre || isRising ? 1.12 : 0.86})`
-            : `saturate(${1 - age * 0.7}) brightness(${isCentre || isRising ? 1.12 : 0.86})`,
-          boxShadow: isCentre || isRising
-            ? '0 22px 50px rgba(34,30,26,.28)'
-            : '0 1px 0 rgba(0,0,0,.18)',
-        }}
-        transition={{ type: 'spring', stiffness: 260, damping: 26 }}
-      >
-        {/* Outline plus a lit leading edge: without both, neighbouring cards of
-            the same colour have no boundary and the row looks like one slab. */}
-        <div className="absolute inset-0 rounded-[1.1rem] border border-black/25 pointer-events-none" />
-        <div className="absolute inset-y-0 left-0 w-[3px] rounded-l-[1.1rem] bg-white/45 pointer-events-none" />
-        <div className="absolute inset-y-0 right-0 w-[3px] rounded-r-[1.1rem] bg-black/25 pointer-events-none" />
-
-        {/* The same star that is on the back of a drawn card, so the card you
-            pull out is recognisably the card you were looking at. Foreshortened
-            in the row, fully itself once the card turns. */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <StarMascot className="w-24 h-24 opacity-95" />
-        </div>
-
-        {marked && (
-          <span className="absolute top-3 left-3 w-2.5 h-2.5 rounded-full bg-gold pointer-events-none" />
-        )}
-      </motion.div>
+      <div className="w-full h-full" style={{ pointerEvents: 'none' }}>
+        <motion.div
+          className="w-full h-full rounded-[1.1rem] relative"
+          style={{ transformStyle: 'preserve-3d' }}
+          animate={{
+            // Every card leans the same way, as records lean in a crate. Turning
+            // the halves of the row toward each other put two opposing
+            // perspectives side by side, which read as a mistake. Only the card
+            // being taken turns flat, arriving face-on as it becomes the question.
+            rotateY: isRising ? 0 : -TURN,
+            y: isRising ? -210 : isCentre ? -LIFT : 0,
+            scale: isRising ? 1.08 : isCentre ? 1.05 : 0.94,
+            opacity: dimmed ? 0.18 : fresh ? 1 : 1 - age * 0.5,
+            filter: fresh
+              ? `saturate(1) brightness(${isCentre || isRising ? 1.1 : 0.82})`
+              : `saturate(${1 - age * 0.7}) brightness(${isCentre || isRising ? 1.1 : 0.82})`,
+            boxShadow: isCentre || isRising
+              ? '0 26px 60px rgba(34,30,26,.32)'
+              : '0 2px 6px rgba(34,30,26,.18)',
+          }}
+          transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+        >
+          <CardBack color={deckColor} />
+          {marked && (
+            <span className="absolute top-[7%] left-[7%] w-2.5 h-2.5 rounded-full bg-gold ring-2 ring-white/40 pointer-events-none" />
+          )}
+        </motion.div>
       </div>
     </motion.div>
   );
@@ -406,13 +466,13 @@ export default function PracticeDeck({
         >
           {/* back */}
           <div
-            className="absolute inset-0 rounded-[1.6rem] flex items-center justify-center"
-            style={{ backfaceVisibility: 'hidden', background: deckColor }}
+            className="absolute inset-0 rounded-[1.6rem] overflow-hidden"
+            style={{ backfaceVisibility: 'hidden' }}
           >
-            <div className="absolute inset-2.5 rounded-[1.25rem] border border-white/25" />
-            {/* Face-down is the one moment with nothing to read, so the star
-                gets the space and watches the pointer while you decide. */}
-            <StarMascot className="w-56 h-56" followPointer />
+            {/* Same printed back as the cards in the row. Face-down is the one
+                moment with nothing to read, so the star watches the pointer
+                while you decide. */}
+            <CardBack color={deckColor} radius="1.6rem" followPointer />
           </div>
 
           {/* front */}
