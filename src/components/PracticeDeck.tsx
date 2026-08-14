@@ -35,10 +35,10 @@ interface PracticeDeckProps {
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
 /**
- * The crate: every card stood on its edge, the way records sit in a box.
- * Moving across the strip walks the row; the card under the cursor rises out of
- * it. Nothing ever turns flat, because one face-on card among edge-on ones read
- * as a different object and the row looked like a pile.
+ * The crate: every card stood on its edge and leaning the same way, as records
+ * lean in a box. Moving across the strip walks the row; the card under the
+ * cursor rises out of it, and only the card actually being taken turns to face
+ * you, arriving flat just as it becomes the question.
  *
  * The student picks rather than being dealt to, so weighting moved onto the
  * cards: never-practised ones keep the deck's full colour while cards taken this
@@ -155,62 +155,77 @@ interface CrateCardProps {
 }
 
 /**
- * One card, always seen from its edge.
+ * One card in the row.
  *
- * Nothing in the row ever turns to face you: turning one card flat made it read
- * as a different object from its neighbours and the row looked like a pile. The
- * card under the cursor is marked by rising out of the deck and brightening
- * instead, and it keeps the deck's own colour the whole way through, so the
- * card you pull out is visibly the card you were looking at.
+ * All of them lean the same way. Turning the two halves of the row toward each
+ * other put two opposing perspectives side by side in the middle, which read as
+ * a mistake rather than as depth. Hovering marks a card by raising and
+ * brightening it, never by turning it; the turn is reserved for the card being
+ * taken, so that movement means one thing only. Colour is the deck's throughout,
+ * so the card pulled out is visibly the card that was looked at.
  */
 function CrateCard({
   index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age, onPick,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
-  // Evenly spaced cards at a steep angle merge into one slab, so the row parts
-  // around the cursor: neighbours are pushed outward, most strongly the nearest
-  // ones, which is what makes a single card legible as a single card.
+  // The row parts around the cursor, most strongly at the nearest neighbours,
+  // which is what makes a single card legible among cards of one colour.
   const x = useTransform(d, (v: number) =>
     v * SPACING + Math.sign(v) * PART * Math.exp(-Math.abs(v) / 2.2));
-  const rotateY = useTransform(d, (v: number) => (v >= 0 ? -TURN : TURN));
   const z = useTransform(d, (v: number) => -Math.abs(v) * 30);
 
   return (
-    <motion.button
-      onClick={onPick}
-      aria-label={isCentre ? '抽这张' : '移到这张'}
-      className="absolute left-1/2 top-1/2 w-[13rem] h-[18rem] -ml-[6.5rem] -mt-[9rem] rounded-[1.1rem]"
-      style={{
-        x, rotateY, z,
-        background: deckColor,
-        transformStyle: 'preserve-3d',
-        zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index),
-      }}
-      animate={{
-        y: isRising ? -180 : isCentre ? -LIFT : 0,
-        scale: isRising ? 1.08 : isCentre ? 1.06 : 0.97,
-        opacity: dimmed ? 0.2 : fresh ? 1 : 1 - age * 0.5,
-        filter: fresh
-          ? `saturate(1) brightness(${isCentre ? 1.12 : 0.86})`
-          : `saturate(${1 - age * 0.7}) brightness(${isCentre ? 1.12 : 0.86})`,
-        boxShadow: isCentre || isRising
-          ? '0 22px 50px rgba(34,30,26,.28)'
-          : '0 1px 0 rgba(0,0,0,.18)',
-      }}
-      transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+    // Position is a motion value and lives on the outside; the turn is animated
+    // and lives on the inside, so taking a card can rotate it without fighting
+    // the value that places it.
+    <motion.div
+      className="absolute left-1/2 top-1/2 w-[13rem] h-[18rem] -ml-[6.5rem] -mt-[9rem]"
+      style={{ x, z, transformStyle: 'preserve-3d', zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index) }}
     >
-      {/* Outline plus a lit leading edge: without both, neighbouring cards of
-          the same colour have no boundary and the row looks like one slab. */}
-      <div className="absolute inset-0 rounded-[1.1rem] border border-black/25 pointer-events-none" />
-      <div className="absolute inset-y-0 left-0 w-[3px] rounded-l-[1.1rem] bg-white/45 pointer-events-none" />
-      <div className="absolute inset-y-0 right-0 w-[3px] rounded-r-[1.1rem] bg-black/25 pointer-events-none" />
-      {marked && (
-        <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-gold pointer-events-none" />
-      )}
-    </motion.button>
+      <motion.button
+        onClick={onPick}
+        aria-label={isCentre ? '抽这张' : '移到这张'}
+        className="w-full h-full rounded-[1.1rem] relative"
+        style={{ background: deckColor, transformStyle: 'preserve-3d' }}
+        animate={{
+          // Every card leans the same way, the way records lean in a crate.
+          // Turning one side of the row to face the other produced two opposing
+          // perspectives meeting in the middle, which read as a broken drawing.
+          // The only card that ever turns flat is the one being taken, and it
+          // turns as it leaves, arriving face-on to match the card it becomes.
+          rotateY: isRising ? 0 : -TURN,
+          y: isRising ? -180 : isCentre ? -LIFT : 0,
+          scale: isRising ? 1.1 : isCentre ? 1.06 : 0.97,
+          opacity: dimmed ? 0.2 : fresh ? 1 : 1 - age * 0.5,
+          filter: fresh
+            ? `saturate(1) brightness(${isCentre || isRising ? 1.12 : 0.86})`
+            : `saturate(${1 - age * 0.7}) brightness(${isCentre || isRising ? 1.12 : 0.86})`,
+          boxShadow: isCentre || isRising
+            ? '0 22px 50px rgba(34,30,26,.28)'
+            : '0 1px 0 rgba(0,0,0,.18)',
+        }}
+        transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+      >
+        {/* Outline plus a lit leading edge: without both, neighbouring cards of
+            the same colour have no boundary and the row looks like one slab. */}
+        <div className="absolute inset-0 rounded-[1.1rem] border border-black/25 pointer-events-none" />
+        <div className="absolute inset-y-0 left-0 w-[3px] rounded-l-[1.1rem] bg-white/45 pointer-events-none" />
+        <div className="absolute inset-y-0 right-0 w-[3px] rounded-r-[1.1rem] bg-black/25 pointer-events-none" />
+
+        {/* The same star that is on the back of a drawn card, so the card you
+            pull out is recognisably the card you were looking at. Foreshortened
+            in the row, fully itself once the card turns. */}
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <StarMascot className="w-24 h-24 opacity-95" />
+        </div>
+
+        {marked && (
+          <span className="absolute top-3 left-3 w-2.5 h-2.5 rounded-full bg-gold pointer-events-none" />
+        )}
+      </motion.button>
+    </motion.div>
   );
 }
-
 
 export default function PracticeDeck({
   deckName, deckColor, questions, cardState,
