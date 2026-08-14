@@ -87,9 +87,15 @@ export default function ListeningDrill({
       .map((m) => m.questionId)
   );
 
-  // Standard exam topic list groupings
-  const part1Topics = ["My daughter", "My cats", "My husband", "Family activities", "My house"];
-  const part2Topics = TRINITY_B1_TOPICS.filter(t => !part1Topics.includes(t));
+  // Topic groupings are derived from the questions this student was actually
+  // given. They used to be a literal list of one student's personal topics,
+  // which leaked her family to everyone who signed in.
+  const part1Topics = Array.from(new Set(
+    displayQuestions.filter(q => q.section === 'Part 1').map(q => q.topic)
+  ));
+  const part2Topics = Array.from(new Set(
+    displayQuestions.filter(q => q.section !== 'Part 1').map(q => q.topic)
+  ));
 
   // --- STATE FOR TAB A: Topic Question Listening ---
   const rawTopicQuestions = displayQuestions.filter(q => q.topic === selectedTopic);

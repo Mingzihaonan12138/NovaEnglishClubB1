@@ -49,7 +49,9 @@ function deckColour(topic: string): string {
 }
 
 export default function App() {
-  const [selectedTopic, setSelectedTopic] = useState<string>(TRINITY_B1_TOPICS[0]);
+  // Starts empty rather than at a constant's first entry, which was the name of
+  // a real student's topic and showed up before any content had loaded.
+  const [selectedTopic, setSelectedTopic] = useState<string>('');
   const [currentQuestion, setCurrentQuestion] = useState<QuestionAnswer | null>(null);
   const [showAnswer, setShowAnswer] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -624,8 +626,24 @@ export default function App() {
   // Filter questions by topic and keep their index for numbering
   const filteredQuestions = displayQuestions.filter(q => q.topic === selectedTopic);
 
-  const part1Topics = ["My daughter", "My cats", "My husband", "Family activities", "My house"];
-  const part2Topics = TRINITY_B1_TOPICS.filter(t => !part1Topics.includes(t));
+  /**
+   * Topic lists come from this student's own questions, never from a constant.
+   *
+   * These used to be the literal array
+   * ["My daughter", "My cats", "My husband", "Family activities", "My house"],
+   * rendered to whoever was signed in. Isolating the question text was not
+   * enough: the topic names alone told every visitor that some student has a
+   * daughter, a husband, cats and a house.
+   */
+  const topicsIn = (section: 'Part 1' | 'Part 2') =>
+    Array.from(new Set(
+      displayQuestions
+        .filter(q => (section === 'Part 1' ? q.section === 'Part 1' : q.section !== 'Part 1'))
+        .map(q => q.topic)
+    ));
+
+  const part1Topics = topicsIn('Part 1');
+  const part2Topics = topicsIn('Part 2');
 
   const stopAllPlayback = () => {
     if (currentAudioRef.current) {
