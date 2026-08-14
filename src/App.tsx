@@ -387,25 +387,31 @@ export default function App() {
     // Part 2 — shared questions, personal answers.
     const part2: QuestionAnswer[] = [];
     const seenTopics = new Set<string>();
-    globalTopics.forEach(gt => {
-      const key = gt.topicName.trim().toLowerCase();
-      if (seenTopics.has(key)) return;
-      seenTopics.add(key);
+    globalTopics
+      // Only the Part 2 half of the library is shared content. Its Part 1
+      // entries are templates the teacher draws from when setting a student up,
+      // and they hold the first student's real family. Iterating the whole
+      // library handed those topics to every student as if they were their own.
+      .filter(gt => (gt.section || 'Part 2') === 'Part 2')
+      .forEach(gt => {
+        const key = gt.topicName.trim().toLowerCase();
+        if (seenTopics.has(key)) return;
+        seenTopics.add(key);
 
-      const conv = userConvs.find(c => c.topicName === gt.topicName);
-      gt.questions.forEach(q => {
-        part2.push({
-          ...q,
-          topic: gt.topicName,
-          section: gt.section || 'Part 2',
-          // The student's own wording of the question, if the teacher wrote one.
-          question: conv?.questions?.[q.id] || q.question,
-          // Their own answer, or nothing at all.
-          suggestedAnswer: conv?.answers?.[q.id] || '',
-          audioUrl: `/audio/${q.id}.wav`,
-        } as QuestionAnswer);
+        const conv = userConvs.find(c => c.topicName === gt.topicName);
+        gt.questions.forEach(q => {
+          part2.push({
+            ...q,
+            topic: gt.topicName,
+            section: 'Part 2',
+            // The student's own wording of the question, if the teacher wrote one.
+            question: conv?.questions?.[q.id] || q.question,
+            // Their own answer, or nothing at all.
+            suggestedAnswer: conv?.answers?.[q.id] || '',
+            audioUrl: `/audio/${q.id}.wav`,
+          } as QuestionAnswer);
+        });
       });
-    });
 
     // With no content set up yet the teacher would face an empty app and have
     // nothing to click, so they fall back to the bundled sample. It is one
