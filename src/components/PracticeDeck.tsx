@@ -41,12 +41,38 @@ interface PracticeDeckProps {
  * coloured shape. The star is large enough to survive being seen almost
  * edge-on, and the double rule gives the eye an edge to catch at any angle.
  */
-/** Relative luminance, for deciding whether a card prints light-on-dark or the reverse. */
-function isLight(hex: string): boolean {
+function luminance(hex: string): number {
   const h = hex.replace('#', '');
   const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
   const f = (v: number) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b) > 0.33;
+  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+}
+
+function contrast(a: string, b: string): number {
+  const x = luminance(a), y = luminance(b);
+  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
+}
+
+const INK = '#221e1a';
+const GOLD = '#e5bb40';
+const CREAM = '#fcf6f0';
+
+/**
+ * Which colour the star prints in on a given card.
+ *
+ * Gold is the mark's own colour and is used wherever it reads. It does not read
+ * on the gold deck, where it would be invisible, nor on the mid-toned ones like
+ * terracotta and slate, where it manages barely 2:1. Those print cream instead,
+ * which keeps the mark legible without pretending the card is darker or lighter
+ * than it is.
+ */
+function starInk(bg: string): string {
+  if (luminance(bg) > 0.33) return INK;
+  return contrast(bg, GOLD) >= 2.5 ? GOLD : CREAM;
+}
+
+function isLight(hex: string): boolean {
+  return luminance(hex) > 0.33;
 }
 
 function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: string; radius?: string; followPointer?: boolean }) {
@@ -57,7 +83,7 @@ function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: 
   const ruleFaint = light ? 'border-black/10' : 'border-white/12';
   const dot = light ? 'bg-black/20' : 'bg-white/30';
   const ring = light ? 'border-black/15' : 'border-white/20';
-  const star = light ? '#221e1a' : '#e5bb40';
+  const star = starInk(color);
   const leadEdge = light ? 'bg-white/60' : 'bg-white/45';
 
   return (
@@ -101,11 +127,17 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '
  * session sink back and desaturate in the order they were taken. The pull toward
  * the right card is visible instead of hidden in a probability.
  */
-const SPACING = 42;   // px between spines
+const SPACING = 26;   // px between spines: cards mostly hide each other
 const TURN = 66;      // every card sits at this angle; none of them face you
 const LIFT = 70;      // how far the card under the cursor rises out of the row
-/** Cards near the cursor slide aside, opening a gap around the one in focus. */
-const PART = 62;
+/**
+ * Cards near the cursor ease apart a little. This used to be large enough to
+ * hollow out the row, leaving the raised card hovering in a void between two
+ * piles rather than standing in the slot it came from. A crate is dense: the
+ * cards hide one another, and what marks one out is that it is lifted, not that
+ * the deck has opened around it.
+ */
+const PART = 15;
 
 function CardCrate({
   questions, cardState, order, deckColor, onPick,
@@ -273,10 +305,16 @@ function CrateCard({
   // frame. tanh gives the same widening either side and passes through smoothly.
   const x = useTransform(d, (v: number) => v * SPACING + PART * Math.tanh(v / 1.2));
   const z = useTransform(d, (v: number) => -Math.abs(v) * 34);
-  // Real depth of field: distant cards go soft. Without it the row reads flat
-  // however far back the cards are placed, because nothing says "further away"
-  // as plainly as being out of focus.
-  const blur = useTransform(d, (v: number) => `blur(${Math.min(Math.abs(v) * 0.9, 3.4)}px)`);
+  // Distant cards go soft, because nothing says "further away" as plainly as
+  // being out of focus. Softening began immediately though, so the cards either
+  // side of the one in focus — the ones you are about to move onto — were
+  // already smeared. Blur now holds off until the second neighbour and tops out
+  // at under 2px: enough to give the row depth, not enough to fog it.
+  const blur = useTransform(d, (v: number) =>
+    `blur(${Math.min(Math.max(Math.abs(v) - 0.8, 0) * 0.55, 1.8)}px)`);
+  // Cards deep in the stack are almost entirely covered anyway; fading the far
+  // ones keeps the row from looking like a fan of separate objects.
+  const fade = useTransform(d, (v: number) => Math.max(1 - Math.max(Math.abs(v) - 3, 0) * 0.18, 0.35));
 
   return (
     // Position is a motion value and lives on the outside; the turn is animated
@@ -284,7 +322,7 @@ function CrateCard({
     // the value that places it.
     <motion.div
       className="absolute left-1/2 top-1/2 w-[16rem] h-[22rem] -ml-[8rem] -mt-[11rem]"
-      style={{ x, z, filter: blur, transformStyle: 'preserve-3d', zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index) }}
+      style={{ x, z, filter: blur, opacity: fade, transformStyle: 'preserve-3d', zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index) }}
     >
       <div className="w-full h-full" style={{ pointerEvents: 'none' }}>
         <motion.div
