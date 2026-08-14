@@ -339,7 +339,22 @@ export default function App() {
     // labelled — see the banner keyed off isShowingSampleData. Students never
     // reach this branch.
     const usingSample = part1.length === 0 && part2.length === 0 && isAdmin;
-    const customizedList = usingSample ? B1_QUESTIONS : [...part1, ...part2];
+
+    // The bundled bank predates the section field, so tag it on the way past.
+    // Its Part 1 topics are exactly the sub-topics of the expansion bank's main
+    // topic; everything else is a published Trinity subject area. Without this
+    // the sample yields no Part 1 decks and the card deck has no entry point.
+    const samplePart1Topics = new Set(
+      (TOPIC_EXPANSION_BANK?.[0]?.smallTopics || []).map(t => t.trim().toLowerCase())
+    );
+    const customizedList = usingSample
+      ? B1_QUESTIONS.map(q => ({
+          ...q,
+          section: samplePart1Topics.has(q.topic.trim().toLowerCase())
+            ? ('Part 1' as const)
+            : ('Part 2' as const),
+        }))
+      : [...part1, ...part2];
 
     // 3. Final visual and functional de-duplication: filter out questions that resolve to identical texts
     // to prevent students from having repetitive items ("Next" going to what appears as the same question)
