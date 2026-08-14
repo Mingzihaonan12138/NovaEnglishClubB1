@@ -3,6 +3,7 @@ import { motion, AnimatePresence, useReducedMotion, useMotionValue, useSpring, u
 import type { MotionValue } from 'motion/react';
 import { Volume2, X, Mic, Square, Bookmark, Loader2, ChevronRight } from 'lucide-react';
 import { QuestionAnswer } from '../constants';
+import { stopSpeaking } from '../lib/tts';
 import { StarMascot } from './Mascot';
 
 export interface DeckCardState {
@@ -44,9 +45,11 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '
  * session sink back and desaturate in the order they were taken. The pull toward
  * the right card is visible instead of hidden in a probability.
  */
-const SPACING = 30;   // px between spines
-const TURN = 74;      // every card sits at this angle; none of them face you
-const LIFT = 26;      // how far the card under the cursor rises out of the row
+const SPACING = 34;   // px between spines
+const TURN = 66;      // every card sits at this angle; none of them face you
+const LIFT = 54;      // how far the card under the cursor rises out of the row
+/** Cards near the cursor slide aside, opening a gap around the one in focus. */
+const PART = 46;
 
 function CardCrate({
   questions, cardState, order, deckColor, onPick,
@@ -164,9 +167,13 @@ function CrateCard({
   index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age, onPick,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
-  const x = useTransform(d, (v: number) => v * SPACING);
+  // Evenly spaced cards at a steep angle merge into one slab, so the row parts
+  // around the cursor: neighbours are pushed outward, most strongly the nearest
+  // ones, which is what makes a single card legible as a single card.
+  const x = useTransform(d, (v: number) =>
+    v * SPACING + Math.sign(v) * PART * Math.exp(-Math.abs(v) / 2.2));
   const rotateY = useTransform(d, (v: number) => (v >= 0 ? -TURN : TURN));
-  const z = useTransform(d, (v: number) => -Math.abs(v) * 26);
+  const z = useTransform(d, (v: number) => -Math.abs(v) * 30);
 
   return (
     <motion.button
@@ -180,16 +187,23 @@ function CrateCard({
         zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index),
       }}
       animate={{
-        y: isRising ? -170 : isCentre ? -LIFT : 0,
-        scale: isRising ? 1.06 : isCentre ? 1.04 : 1,
-        opacity: dimmed ? 0.25 : fresh ? 1 : 1 - age * 0.55,
-        filter: fresh ? 'saturate(1)' : `saturate(${1 - age * 0.7})`,
+        y: isRising ? -180 : isCentre ? -LIFT : 0,
+        scale: isRising ? 1.08 : isCentre ? 1.06 : 0.97,
+        opacity: dimmed ? 0.2 : fresh ? 1 : 1 - age * 0.5,
+        filter: fresh
+          ? `saturate(1) brightness(${isCentre ? 1.12 : 0.86})`
+          : `saturate(${1 - age * 0.7}) brightness(${isCentre ? 1.12 : 0.86})`,
+        boxShadow: isCentre || isRising
+          ? '0 22px 50px rgba(34,30,26,.28)'
+          : '0 1px 0 rgba(0,0,0,.18)',
       }}
       transition={{ type: 'spring', stiffness: 260, damping: 26 }}
     >
-      {/* A hairline down the spine, so an edge-on card still reads as a card. */}
-      <div className="absolute inset-y-3 right-2 w-px bg-white/30 pointer-events-none" />
-      <div className="absolute inset-2 rounded-[0.85rem] border border-white/15 pointer-events-none" />
+      {/* Outline plus a lit leading edge: without both, neighbouring cards of
+          the same colour have no boundary and the row looks like one slab. */}
+      <div className="absolute inset-0 rounded-[1.1rem] border border-black/25 pointer-events-none" />
+      <div className="absolute inset-y-0 left-0 w-[3px] rounded-l-[1.1rem] bg-white/45 pointer-events-none" />
+      <div className="absolute inset-y-0 right-0 w-[3px] rounded-r-[1.1rem] bg-black/25 pointer-events-none" />
       {marked && (
         <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-gold pointer-events-none" />
       )}
@@ -219,8 +233,14 @@ export default function PracticeDeck({
 
   const state = current ? cardState[current.id] : undefined;
 
+  // Whatever is being read aloud belongs to the card on screen. Leaving the
+  // deck by any route — the exit button, Escape, the browser back gesture —
+  // must not leave a voice talking to an empty room.
+  useEffect(() => () => { stopSpeaking(); }, []);
+
   /** Back to the crate so the student chooses the next one themselves. */
   const deal = useCallback(() => {
+    stopSpeaking();
     if (current) historyRef.current.push(current);
     setPicking(true);
     setRevealed(false);
@@ -229,6 +249,7 @@ export default function PracticeDeck({
   }, [current]);
 
   const pick = useCallback((q: QuestionAnswer) => {
+    stopSpeaking();
     setCurrent(q);
     setPicking(false);
     setRevealed(false);
@@ -303,7 +324,7 @@ export default function PracticeDeck({
 
       {!isRecording && (
         <p className="absolute top-1 left-0 text-xs text-muted">
-          {deckName} · 第 {drawn} 张
+          {deckName} · {picking ? `共 ${questions.length} 张` : `第 ${drawn} 张`}
         </p>
       )}
 
@@ -476,9 +497,12 @@ export default function PracticeDeck({
         )}
       </div>
 
-      {!isRecording && drawn <= 1 && (
+      {/* Said the deck "deals" unpractised cards first, which stopped being true
+          when choosing replaced dealing. It now reports what is left to do. */}
+      {picking && !isRecording && (
         <p className="absolute bottom-0 text-[11px] text-muted">
-          这副牌优先发没练过的 {counts.fresh} 张{counts.marked > 0 && ` 和标记过的 ${counts.marked} 张`}
+          还有 {counts.fresh} 张没练过
+          {counts.marked > 0 && `，标记过的 ${counts.marked} 张`}
         </p>
       )}
     </div>

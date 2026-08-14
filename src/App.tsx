@@ -8,7 +8,7 @@ import {
 
 import { motion, AnimatePresence } from 'motion/react';
 import { B1_QUESTIONS, TRINITY_B1_TOPICS, QuestionAnswer, TOPIC_EXPANSION_BANK } from './constants';
-import { speakQuestion } from './services/geminiService';
+import { speakQuestion, stopSpeaking } from './services/geminiService';
 import { 
   auth, loginWithGoogle, logout, saveRecording, 
   subscribeToStudentRecordings,
@@ -811,7 +811,10 @@ export default function App() {
     }
     setPlayingRecordingId(null);
     setIsPlaying(false);
-    window.speechSynthesis.cancel();
+    // The examiner's voice plays through its own element inside lib/tts, which
+    // this ref never knew about, so leaving a deck left it talking. It also has
+    // to stop before recording starts, or it ends up inside the recording.
+    stopSpeaking();
     setIsSpeaking(false);
   };
 
@@ -1941,7 +1944,11 @@ export default function App() {
             cardState={deckCardState}
             onToggleMark={toggleMark}
             onSpeak={(q) => speakQuestion(q.question, q.audioUrl)}
-            onExit={() => { setActiveDeck(null); recordingQuestionRef.current = null; }}
+            onExit={() => {
+              stopAllPlayback();
+              setActiveDeck(null);
+              recordingQuestionRef.current = null;
+            }}
             isRecording={isRecording}
             recordingTime={recordingTime}
             isSaving={isSaving}
