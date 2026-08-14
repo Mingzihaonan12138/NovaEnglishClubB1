@@ -42,6 +42,11 @@ import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocum
  * no extra configuration. The colour only ever appears on card backs and deck
  * covers, never in the answering view.
  */
+/** The Express side of this app only exists when running it locally. */
+const isLocalDev =
+  typeof window !== 'undefined' &&
+  ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
 const DECK_COLOURS = ['#455da3', '#7a8c4e', '#b4693a', '#6d7f96', '#8a6aa1', '#a8794e'];
 function deckColour(topic: string): string {
   let h = 0;
@@ -479,11 +484,11 @@ export default function App() {
     await saveGlobalTopic({ topicName: topic, section: 'Part 2', questions });
   };
 
-  /** One deck per Part 1 topic, with just enough state for the cover. */
-  const part1Decks = (() => {
+  /** One deck per topic, with just enough state for the cover. */
+  const decksFor = (section: 'Part 1' | 'Part 2') => {
     const byTopic = new Map<string, QuestionAnswer[]>();
     displayQuestions
-      .filter(q => q.section === 'Part 1')
+      .filter(q => (section === 'Part 1' ? q.section === 'Part 1' : q.section !== 'Part 1'))
       .forEach(q => {
         const list = byTopic.get(q.topic) || [];
         list.push(q);
@@ -494,7 +499,10 @@ export default function App() {
       total: qs.length,
       fresh: qs.filter(q => !deckCardState[q.id]?.lastPractisedAt).length,
     }));
-  })();
+  };
+
+  const part1Decks = decksFor('Part 1');
+  const part2Decks = decksFor('Part 2');
 
   const startRecordingFor = (q: QuestionAnswer) => {
     setCurrentQuestion(q);
@@ -1135,13 +1143,18 @@ export default function App() {
                        </button>
                     </div>
 
-                    <div className="flex gap-2">
-                      <button 
+                    {/*
+                      Audio generation writes files to disk, which the deployed
+                      serverless environment has none of, so on the live site
+                      this button could only ever fail. It is a local tool.
+                    */}
+                    <div className={`flex gap-2 ${isLocalDev ? '' : 'hidden'}`}>
+                      <button
                         onClick={bulkGenerateAudio}
                         disabled={isGeneratingAudio}
                         className="px-4 py-2 bg-neutral-100 text-neutral-600 rounded-xl text-xs font-bold flex items-center gap-2 hover:bg-neutral-200 disabled:opacity-50"
                       >
-                        <Volume2 className="w-3 h-3" /> 
+                        <Volume2 className="w-3 h-3" />
                         {isGeneratingAudio ? "Generating..." : "Sync Part 1 Audio"}
                       </button>
                       {genStatus && <span className="text-[10px] text-neutral-400 mt-2">{genStatus}</span>}
@@ -1225,40 +1238,27 @@ export default function App() {
                                </h3>
                                <p className="text-[10px] text-blue-700 font-medium uppercase tracking-wider mt-0.5">Customizing Student Content</p>
                             </div>
-                            <div className="flex gap-2">
-                               <button 
-                                onClick={() => {
-                                  if (!confirm("Are you sure you want to reset ALL of this student's content by copying from the library template? This will overwrite their custom questions/answers.")) return;
-                                  // Bulk clone from global topics
-                                  globalTopics.forEach(gt => {
-                                    if (gt.section === 'Part 1') {
-                                      saveUserTopic({ userId: selectedStudentId, topicName: gt.topicName, questions: gt.questions });
-                                    } else {
-                                      const answers: Record<string, string> = {};
-                                      gt.questions.forEach(q => { answers[q.id] = q.suggestedAnswer; });
-                                      savePersonalizedConversation({ userId: selectedStudentId, topicName: gt.topicName, answers });
-                                    }
-                                  });
-                                  alert("Applied from Library Template!");
-                                }}
-                                className="px-5 py-2 bg-black text-white rounded-xl text-xs font-bold shadow-lg flex items-center gap-2 hover:bg-neutral-800 transition-all active:scale-95"
-                               >
-                                 <RefreshCcw className="w-3 h-3" /> Apply Library Defaults
-                               </button>
-                               <button 
-                                onClick={() => {
-                                  const source = prompt("Clone from which existing student's email?");
-                                  if (source) {
-                                    const src = allUsers.find(u => u.email === source);
-                                    if (src) cloneStudentData(src.uid!, selectedStudentId);
-                                    else alert("User not found among registered students.");
-                                  }
-                                }}
-                                className="px-5 py-2 bg-white text-neutral-600 rounded-xl text-xs font-bold border border-neutral-200 flex items-center gap-2 hover:bg-neutral-100 transition-colors shadow-sm"
-                               >
-                                 <Copy className="w-3 h-3" /> Copy from Student
-                               </button>
-                            </div>
+                            {/*
+                              "Apply Library Defaults" used to sit here and pour
+                              every library topic into the student at once. Part 1
+                              is five topics the candidate picks, so applying all
+                              of them is the wrong shape, and it overwrote work.
+                              Adding topics one at a time from the library lives
+                              in the Part 1 editor below, next to the topic it
+                              affects. Copying another student stays, quietly.
+                            */}
+                            <button
+                              onClick={() => {
+                                const source = prompt("从哪个学生复制？填他的邮箱：");
+                                if (!source) return;
+                                const src = allUsers.find(u => u.email === source.trim().toLowerCase());
+                                if (src) cloneStudentData(src.uid!, selectedStudentId);
+                                else alert("名单里没有这个邮箱。");
+                              }}
+                              className="text-xs font-semibold text-blue-700 hover:underline flex items-center gap-1.5 shrink-0"
+                            >
+                              <Copy className="w-3.5 h-3.5" /> 从别的学生复制
+                            </button>
                           </div>
 
                           <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
@@ -1400,16 +1400,20 @@ export default function App() {
                                     />
                                   </div>
                                 ))}
-                                {filteredQuestions.length === 0 && (
-                                  <button 
-                                    onClick={() => {
-                                      const template = globalTopics.find(gt => gt.topicName === selectedTopic);
-                                      if (template) saveUserTopic({ userId: selectedStudentId, topicName: selectedTopic, questions: template.questions });
-                                      else alert("No template found for this topic. Add it in Content Library first.");
-                                    }}
+                                {/*
+                                  A dashed "Apply Topic Template" button used to
+                                  fill this space. It did the same job as the
+                                  library chips above, but by overwriting rather
+                                  than adding, so it is gone. What belongs in an
+                                  empty topic is an invitation to write the first
+                                  question.
+                                */}
+                                {selectedTopic && filteredQuestions.length === 0 && (
+                                  <button
+                                    onClick={addPart1Question}
                                     className="w-full py-10 border-2 border-dashed border-neutral-200 rounded-2xl text-neutral-400 font-bold text-sm hover:border-neutral-400 hover:text-neutral-600 transition-all"
                                   >
-                                    + Apply Topic Template
+                                    「{selectedTopic}」还没有题目，加第一题
                                   </button>
                                 )}
                               </div>
@@ -1840,17 +1844,28 @@ export default function App() {
               </p>
             </div>
 
-            {/* Part 1 decks: the topics this student chose with their teacher. */}
-            {part1Decks.length > 0 && (
-              <div className="max-w-4xl mx-auto w-full">
+            {/*
+              Speaking practice happens here and nowhere else. There used to be
+              a "Speaking" module card below as well, which opened a list-based
+              version of this same activity — two doors into one room, and the
+              student had to guess which. The decks cover both halves of the
+              exam, so the module card became the recording history instead.
+            */}
+            {[
+              { label: 'Part 1', tag: '你自己选的', tagClass: 'text-gold-ink bg-gold-soft',
+                lede: '考官只会问你准备过的生活。', decks: part1Decks, cols: 'lg:grid-cols-5' },
+              { label: 'Part 2', tag: '考纲固定', tagClass: 'text-blue-ink bg-blue-soft',
+                lede: '所有考生题目一样，答案是你自己的。', decks: part2Decks, cols: 'lg:grid-cols-3' },
+            ].filter(g => g.decks.length > 0).map(g => (
+              <div key={g.label} className="max-w-4xl mx-auto w-full">
                 <div className="flex items-baseline gap-3 mb-1">
-                  <h3 className="font-display text-lg font-semibold">Part 1</h3>
-                  <span className="text-xs font-medium text-gold-ink bg-gold-soft px-2 py-0.5 rounded-md">你自己选的</span>
-                  <span className="ml-auto text-xs text-muted">{part1Decks.length} 副牌</span>
+                  <h3 className="font-display text-lg font-semibold">{g.label}</h3>
+                  <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${g.tagClass}`}>{g.tag}</span>
+                  <span className="ml-auto text-xs text-muted">{g.decks.length} 副牌</span>
                 </div>
-                <p className="text-sm text-ink-soft mb-4">考官只会问你准备过的生活。</p>
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-                  {part1Decks.map(d => (
+                <p className="text-sm text-ink-soft mb-4">{g.lede}</p>
+                <div className={`grid grid-cols-2 sm:grid-cols-3 ${g.cols} gap-3`}>
+                  {g.decks.map(d => (
                     <button
                       key={d.topic}
                       onClick={() => setActiveDeck(d.topic)}
@@ -1865,7 +1880,7 @@ export default function App() {
                   ))}
                 </div>
               </div>
-            )}
+            ))}
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-4xl mx-auto pt-4">
               {/* CARD 1: Train Listening */}
@@ -1903,37 +1918,47 @@ export default function App() {
                 </div>
               </button>
 
-              {/* CARD 2: Practice Speaking */}
-              <button 
+              {/*
+                Was "Speaking", which duplicated the decks above. Practising and
+                looking back at what you already sent are genuinely different
+                jobs, so this door now leads only to the latter.
+              */}
+              <button
                 id="portal-btn-speaking"
                 onClick={() => setActiveModule('speaking')}
                 className="group text-left bg-card rounded-[2rem] border border-line hover:border-blue transition-colors duration-200 p-8 md:p-10 flex flex-col justify-between min-h-[22rem]"
               >
                 <div className="space-y-6">
                   <div className="w-14 h-14 bg-blue-soft text-blue rounded-2xl flex items-center justify-center group-hover:bg-blue group-hover:text-white transition-colors duration-200">
-                    <Mic className="w-6 h-6" />
+                    <MessageSquare className="w-6 h-6" />
                   </div>
 
                   <div className="space-y-2">
                     <h3 className="text-2xl font-display font-semibold text-ink flex items-center gap-2.5">
-                      Speaking
-                      <span className="text-xs font-sans font-medium text-muted">口语实战</span>
+                      我的录音
+                      <span className="text-xs font-sans font-medium text-muted">和老师的反馈</span>
                     </h3>
                     <p className="text-sm text-ink-soft leading-relaxed">
-                      Record a full answer to a topic question. It goes straight to your
-                      teacher, who listens and writes back.
+                      你交过的每一段录音都在这里，老师听完写的话也在。
+                      想练新的就点上面的牌。
                     </p>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between border-t border-line pt-5 mt-8 w-full text-sm">
                   <span className="font-semibold text-blue inline-flex items-center gap-1.5">
-                    Start speaking
+                    查看
                     <ChevronRight className="w-4 h-4 group-hover:translate-x-0.5 transition-transform" />
                   </span>
                   <div className="flex gap-2 text-xs text-ink-soft">
-                    <span className="px-2.5 py-1 bg-sand rounded-lg">Record</span>
-                    <span className="px-2.5 py-1 bg-sand rounded-lg">Teacher replies</span>
+                    <span className="px-2.5 py-1 bg-sand rounded-lg">
+                      已交 {recordings.length}
+                    </span>
+                    {recordings.some(r => r.status === 'reviewed') && (
+                      <span className="px-2.5 py-1 bg-gold-soft text-gold-ink rounded-lg font-semibold">
+                        有新反馈
+                      </span>
+                    )}
                   </div>
                 </div>
               </button>
