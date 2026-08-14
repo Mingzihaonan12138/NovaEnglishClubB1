@@ -245,6 +245,7 @@ export default function App() {
   const [importJson, setImportJson] = useState("");
   const [newTopicName, setNewTopicName] = useState("");
   const [importTopicName, setImportTopicName] = useState("");
+  const [selectedPart2Topic, setSelectedPart2Topic] = useState("");
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importError, setImportError] = useState("");
 
@@ -808,6 +809,47 @@ export default function App() {
 
   const part1Topics = topicsIn('Part 1');
   const part2Topics = topicsIn('Part 2');
+  const part2TopicNames = part2Topics;
+
+  useEffect(() => {
+    if (part2TopicNames.length && !part2TopicNames.includes(selectedPart2Topic)) {
+      setSelectedPart2Topic(part2TopicNames[0]);
+    }
+  }, [part2TopicNames.join('|'), selectedPart2Topic]);
+
+  /**
+   * Blanks every answer this student has while leaving the questions alone.
+   *
+   * Copying a topic from the library brings the previous student's answers over
+   * as a draft. Deleting them one field at a time is the tedious part of taking
+   * on someone new, so it is one action.
+   */
+  const clearAllAnswers = async () => {
+    if (!selectedStudentId) return;
+    const topicCount = userTopics.length;
+    const convCount = userConvs.length;
+    if (!confirm(
+      `清空这个学生的所有参考答案，题目全部保留。\n\n` +
+      `影响：Part 1 的 ${topicCount} 个话题、Part 2 的 ${convCount} 个主题。\n\n` +
+      `这一步不能撤销，继续？`
+    )) return;
+
+    for (const t of userTopics) {
+      await saveUserTopic({
+        userId: selectedStudentId,
+        topicName: t.topicName,
+        questions: t.questions.map(q => ({ ...q, suggestedAnswer: '' })),
+      });
+    }
+    for (const c of userConvs) {
+      await savePersonalizedConversation({
+        userId: selectedStudentId,
+        topicName: c.topicName,
+        answers: {},
+      });
+    }
+    alert("答案已清空，题目都还在。");
+  };
 
   const stopAllPlayback = () => {
     if (currentAudioRef.current) {
@@ -1107,7 +1149,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-page text-ink font-sans p-4 md:p-8">
-      <div className="max-w-6xl mx-auto space-y-8">
+      {/* The content editor is a two-column workspace and was being squeezed
+          into the same width as the student-facing pages. It gets the screen. */}
+      <div className={`${isEditing ? 'max-w-[110rem]' : 'max-w-6xl'} mx-auto space-y-8`}>
         <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <StarMascot className="w-11 h-11 shrink-0" />
@@ -1345,18 +1389,27 @@ export default function App() {
                               in the Part 1 editor below, next to the topic it
                               affects. Copying another student stays, quietly.
                             */}
-                            <button
-                              onClick={() => {
-                                const source = prompt("从哪个学生复制？填他的邮箱：");
-                                if (!source) return;
-                                const src = allUsers.find(u => u.email === source.trim().toLowerCase());
-                                if (src) cloneStudentData(src.uid!, selectedStudentId);
-                                else alert("名单里没有这个邮箱。");
-                              }}
-                              className="text-xs font-semibold text-blue-700 hover:underline flex items-center gap-1.5 shrink-0"
-                            >
-                              <Copy className="w-3.5 h-3.5" /> 从别的学生复制
-                            </button>
+                            <div className="flex items-center gap-5 shrink-0">
+                              <button
+                                onClick={clearAllAnswers}
+                                className="text-xs font-semibold text-neutral-500 hover:text-red-600 transition-colors flex items-center gap-1.5"
+                                title="题目全部保留，只清空参考答案"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> 清空所有答案
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const source = prompt("从哪个学生复制？填他的邮箱：");
+                                  if (!source) return;
+                                  const src = allUsers.find(u => u.email === source.trim().toLowerCase());
+                                  if (src) cloneStudentData(src.uid!, selectedStudentId);
+                                  else alert("名单里没有这个邮箱。");
+                                }}
+                                className="text-xs font-semibold text-blue-700 hover:underline flex items-center gap-1.5"
+                              >
+                                <Copy className="w-3.5 h-3.5" /> 从别的学生复制
+                              </button>
+                            </div>
                           </div>
 
                           <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
@@ -1454,7 +1507,7 @@ export default function App() {
                                 </button>
                               )}
 
-                              <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 scrollbar-thin">
+                              <div className="space-y-4 h-[calc(100vh-30rem)] min-h-[24rem] overflow-y-auto pr-2 scrollbar-thin">
                                 {filteredQuestions.map((q, idx) => (
                                   <div key={q.id} className="p-5 bg-neutral-50 rounded-2xl border border-neutral-100 space-y-3">
                                       <div className="flex items-center gap-2">
@@ -1526,8 +1579,23 @@ export default function App() {
                                   setShowImportModal(true);
                                 }} className="text-[10px] font-bold text-blue-600 hover:underline">批量粘贴</button>
                               </div>
-                              <div className="space-y-4 max-h-[570px] overflow-y-auto pr-2 scrollbar-thin">
-                                {TRINITY_B1_TOPICS.slice(5).map(topic => (
+                              {/* One subject area at a time, mirroring Part 1.
+                                  All six at once made a scroll you had to hunt
+                                  through to find the question you meant. */}
+                              <select
+                                value={selectedPart2Topic}
+                                onChange={(e) => setSelectedPart2Topic(e.target.value)}
+                                className="w-full p-4 bg-white border border-neutral-200 rounded-2xl font-bold text-sm shadow-sm"
+                              >
+                                {part2TopicNames.map(t => (
+                                  <option key={t} value={t}>
+                                    {t}（{displayQuestions.filter(q => q.topic === t).length} 题）
+                                  </option>
+                                ))}
+                              </select>
+
+                              <div className="space-y-4 h-[calc(100vh-30rem)] min-h-[24rem] overflow-y-auto pr-2 scrollbar-thin">
+                                {[selectedPart2Topic].filter(Boolean).map(topic => (
                                   <div key={topic} className="p-5 bg-neutral-50 rounded-2xl border border-neutral-100">
                                     <div className="flex items-center justify-between mb-4 border-b border-neutral-200 pb-2">
                                       <p className="text-[10px] font-bold text-neutral-400">{topic}</p>
