@@ -194,10 +194,12 @@ function CrateCard({
   index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
-  // The row parts around the cursor, most strongly at the nearest neighbours,
-  // which is what makes a single card legible among cards of one colour.
-  const x = useTransform(d, (v: number) =>
-    v * SPACING + Math.sign(v) * PART * Math.exp(-Math.abs(v) / 2.2));
+  // The row parts around the cursor so that one card is legible among cards of
+  // a single colour. tanh rather than sign: sign flips the whole PART term the
+  // instant d crosses zero, which threw a card 92px across the centre line in
+  // one frame. tanh gives the same widening either side and passes smoothly
+  // through the middle.
+  const x = useTransform(d, (v: number) => v * SPACING + PART * Math.tanh(v / 1.2));
   const z = useTransform(d, (v: number) => -Math.abs(v) * 30);
 
   return (
