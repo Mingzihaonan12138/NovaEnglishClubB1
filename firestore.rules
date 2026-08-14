@@ -40,10 +40,13 @@ service cloud.firestore {
     // is read-only, because writes are what consume the project's quota — a
     // single recording is up to 1 MB and the free tier holds about 5,800 of
     // them, so an open write path would be the one thing worth abusing.
+    // The teacher counts as enrolled without being on their own roster,
+    // otherwise they cannot record anything to check that submitting works.
     function isEnrolled() {
-      return isSignedIn() &&
-             request.auth.token.email != null &&
-             exists(/databases/$(database)/documents/allowlist/$(request.auth.token.email.lower()));
+      return isV1Admin() ||
+             (isSignedIn() &&
+              request.auth.token.email != null &&
+              exists(/databases/$(database)/documents/allowlist/$(request.auth.token.email.lower())));
     }
 
     function isValidRecordingAudio(data) {

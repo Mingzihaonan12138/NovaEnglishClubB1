@@ -333,12 +333,13 @@ export default function App() {
       });
     });
 
-    // The teacher sees the bundled sample material so the app is not empty
-    // while there are no students set up yet.
-    const customizedList =
-      part1.length === 0 && part2.length === 0 && isAdmin
-        ? B1_QUESTIONS
-        : [...part1, ...part2];
+    // With no content set up yet the teacher would face an empty app and have
+    // nothing to click, so they fall back to the bundled sample. It is one
+    // former student's real prepared material, so it must be unmistakably
+    // labelled — see the banner keyed off isShowingSampleData. Students never
+    // reach this branch.
+    const usingSample = part1.length === 0 && part2.length === 0 && isAdmin;
+    const customizedList = usingSample ? B1_QUESTIONS : [...part1, ...part2];
 
     // 3. Final visual and functional de-duplication: filter out questions that resolve to identical texts
     // to prevent students from having repetitive items ("Next" going to what appears as the same question)
@@ -395,6 +396,13 @@ export default function App() {
   const deckQuestions = activeDeck
     ? displayQuestions.filter(q => q.topic === activeDeck)
     : [];
+
+  /**
+   * True when the teacher is looking at the bundled sample rather than at real
+   * content. Worth saying out loud: the sample is one former student's actual
+   * family, and seeing it unlabelled looks exactly like a privacy leak.
+   */
+  const isShowingSampleData = isAdmin && userTopics.length === 0 && globalTopics.length === 0;
 
   /** One deck per Part 1 topic, with just enough state for the cover. */
   const part1Decks = (() => {
@@ -958,6 +966,17 @@ export default function App() {
             )}
           </div>
         </header>
+
+        {isShowingSampleData && (
+          <div className="flex items-start gap-3 bg-gold-soft border border-gold/40 rounded-2xl px-4 py-3">
+            <AlertCircle className="w-4 h-4 text-gold-ink shrink-0 mt-0.5" />
+            <p className="text-sm text-gold-ink leading-relaxed">
+              <span className="font-semibold">这是内置样例题库，学生看不到。</span>{' '}
+              它是一位学员真实准备过的材料（她的女儿、她的猫）。
+              在「Customize Content」里给学生导入话题之后，这块就会换成真实内容。
+            </p>
+          </div>
+        )}
 
         {isEditing ? (
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
