@@ -1,8 +1,16 @@
 <!doctype html>
-<html lang="en">
+<!--
+  translate="no" is load-bearing, not a preference. Browser translation rewrites
+  text nodes in place, and when React later re-renders it looks for nodes the
+  translator replaced and throws NotFoundError on insertBefore, blanking the
+  page. The same thing took down a sibling site. The UI is deliberately
+  bilingual already, so there is nothing to gain by translating it.
+-->
+<html lang="en" translate="no">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="google" content="notranslate" />
     <title>Nova English Club · Trinity GESE B1</title>
   </head>
   <body>
