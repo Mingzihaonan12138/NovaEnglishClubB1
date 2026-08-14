@@ -33,6 +33,7 @@ import ListeningDrill from './components/ListeningDrill';
 import ListeningSetupPanel from './components/ListeningSetupPanel';
 import Mascot, { StarMascot } from './components/Mascot';
 import PracticeDeck, { DeckCardState } from './components/PracticeDeck';
+import { resolveQuestions, isShowingSample } from './lib/resolveQuestions';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocumentSnapshot, DocumentData, where } from 'firebase/firestore';
 
@@ -370,89 +371,22 @@ export default function App() {
    * B1_QUESTIONS in constants.ts is one specific student's prepared material.
    * It is demo content for the teacher's own account, never student-facing.
    */
-  const getDisplayQuestions = () => {
-    // Part 1 — strictly per-student.
-    const part1: QuestionAnswer[] = [];
-    userTopics.forEach(t => {
-      t.questions.forEach(q => {
-        part1.push({
-          ...q,
-          topic: t.topicName,
-          section: 'Part 1',
-          audioUrl: `/audio/${q.id}.wav`,
-        } as QuestionAnswer);
-      });
-    });
-
-    // Part 2 — shared questions, personal answers.
-    const part2: QuestionAnswer[] = [];
-    const seenTopics = new Set<string>();
-    globalTopics
-      // Only the Part 2 half of the library is shared content. Its Part 1
-      // entries are templates the teacher draws from when setting a student up,
-      // and they hold the first student's real family. Iterating the whole
-      // library handed those topics to every student as if they were their own.
-      .filter(gt => (gt.section || 'Part 2') === 'Part 2')
-      .forEach(gt => {
-        const key = gt.topicName.trim().toLowerCase();
-        if (seenTopics.has(key)) return;
-        seenTopics.add(key);
-
-        const conv = userConvs.find(c => c.topicName === gt.topicName);
-        gt.questions.forEach(q => {
-          part2.push({
-            ...q,
-            topic: gt.topicName,
-            section: 'Part 2',
-            // The student's own wording of the question, if the teacher wrote one.
-            question: conv?.questions?.[q.id] || q.question,
-            // Their own answer, or nothing at all.
-            suggestedAnswer: conv?.answers?.[q.id] || '',
-            audioUrl: `/audio/${q.id}.wav`,
-          } as QuestionAnswer);
-        });
-      });
-
-    // With no content set up yet the teacher would face an empty app and have
-    // nothing to click, so they fall back to the bundled sample. It is one
-    // former student's real prepared material, so it must be unmistakably
-    // labelled — see the banner keyed off isShowingSampleData. Students never
-    // reach this branch.
-    const usingSample = part1.length === 0 && part2.length === 0 && isAdmin;
-
-    // The bundled bank predates the section field, so tag it on the way past.
-    // Its Part 1 topics are exactly the sub-topics of the expansion bank's main
-    // topic; everything else is a published Trinity subject area. Without this
-    // the sample yields no Part 1 decks and the card deck has no entry point.
-    const samplePart1Topics = new Set(
-      (TOPIC_EXPANSION_BANK?.[0]?.smallTopics || []).map(t => t.trim().toLowerCase())
-    );
-    const customizedList = usingSample
-      ? B1_QUESTIONS.map(q => ({
-          ...q,
-          section: samplePart1Topics.has(q.topic.trim().toLowerCase())
-            ? ('Part 1' as const)
-            : ('Part 2' as const),
-        }))
-      : [...part1, ...part2];
-
-    // 3. Final visual and functional de-duplication: filter out questions that resolve to identical texts
-    // to prevent students from having repetitive items ("Next" going to what appears as the same question)
-    const finalUniqueMap = new Map<string, QuestionAnswer>();
-    customizedList.forEach(q => {
-      const cleanText = q.question.indexOf('(') !== -1 
-        ? q.question.slice(0, q.question.indexOf('(')).trim() 
-        : q.question.trim();
-      const uniqueKey = `${q.topic.toLowerCase()}_${cleanText.toLowerCase()}`;
-      if (!finalUniqueMap.has(uniqueKey)) {
-        finalUniqueMap.set(uniqueKey, q);
-      }
-    });
-
-    return Array.from(finalUniqueMap.values());
+  /**
+   * Who may see whose material now lives in src/lib/resolveQuestions.ts, on its
+   * own and covered by scripts/test-resolve.ts. It sat inline here while two
+   * leaks reached production: a hardcoded topic list shown to everyone, and the
+   * library's Part 1 templates handed to every student.
+   */
+  const resolveInput = {
+    userTopics,
+    globalTopics,
+    userConversations: userConvs,
+    sample: B1_QUESTIONS,
+    samplePart1Topics: TOPIC_EXPANSION_BANK?.[0]?.smallTopics || [],
+    isAdmin,
   };
-
-  const displayQuestions = getDisplayQuestions();
+  const displayQuestions = resolveQuestions(resolveInput);
+  const getDisplayQuestions = () => displayQuestions;
 
   /**
    * Everything the deck needs to weight a draw, gathered from data the app
@@ -497,7 +431,7 @@ export default function App() {
    * content. Worth saying out loud: the sample is one former student's actual
    * family, and seeing it unlabelled looks exactly like a privacy leak.
    */
-  const isShowingSampleData = isAdmin && userTopics.length === 0 && globalTopics.length === 0;
+  const isShowingSampleData = isShowingSample(resolveInput);
 
   /** The Part 1 topics belonging to whichever student the teacher is editing. */
   const studentPart1Topics = userTopics.map(t => t.topicName);
