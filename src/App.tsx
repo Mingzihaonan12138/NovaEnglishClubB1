@@ -438,6 +438,27 @@ export default function App() {
     setNewTopicName('');
   };
 
+  /**
+   * Part 1 topics sitting in the shared library that this student does not have
+   * yet. Each student picks their own five, so the library is a menu to draw
+   * from rather than something applied wholesale.
+   */
+  const addableLibraryTopics = globalTopics
+    .filter(gt => gt.section === 'Part 1')
+    .filter(gt => !studentPart1Topics.some(t => t.toLowerCase() === gt.topicName.toLowerCase()));
+
+  const addTopicFromLibrary = async (gt: GlobalTopic) => {
+    if (!selectedStudentId) return;
+    // Questions and model answers both come across; the answers are a draft for
+    // the teacher to rewrite in this student's own words.
+    await saveUserTopic({
+      userId: selectedStudentId,
+      topicName: gt.topicName,
+      questions: gt.questions,
+    });
+    setSelectedTopic(gt.topicName);
+  };
+
   const addPart1Question = async () => {
     if (!selectedStudentId || !selectedTopic) return;
     const topic = userTopics.find(t => t.topicName === selectedTopic);
@@ -1303,6 +1324,27 @@ export default function App() {
                                     <Plus className="w-3.5 h-3.5" /> 加话题
                                   </button>
                                 </div>
+
+                                {addableLibraryTopics.length > 0 && (
+                                  <div className="pt-1">
+                                    <p className="text-[10px] font-bold text-neutral-400 mb-1.5">
+                                      从模板库添加（题目和参考答案一起带过来，之后照这个学生改）
+                                    </p>
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {addableLibraryTopics.map(gt => (
+                                        <button
+                                          key={gt.topicName}
+                                          onClick={() => addTopicFromLibrary(gt)}
+                                          className="px-2.5 py-1.5 bg-white border border-neutral-200 rounded-lg text-[11px] font-bold text-neutral-600 hover:border-neutral-950 hover:text-neutral-950 transition-colors flex items-center gap-1"
+                                        >
+                                          <Plus className="w-3 h-3" />
+                                          {gt.topicName}
+                                          <span className="text-neutral-400 font-medium">{gt.questions.length}</span>
+                                        </button>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
                               </div>
 
                               {selectedTopic && studentPart1Topics.includes(selectedTopic) && (
@@ -1508,12 +1550,18 @@ export default function App() {
                 <div className="space-y-8 animate-in fade-in duration-300">
                   <div className="flex flex-col md:flex-row items-center justify-between gap-6 p-8 bg-neutral-900 text-white rounded-[2.5rem]">
                      <div>
-                        <h3 className="text-xl font-bold font-display">Shared Content Templates</h3>
-                        <p className="text-neutral-400 text-sm mt-1">Define the core questions and default answers used by everyone.</p>
+                        <h3 className="text-xl font-bold font-display">模板库</h3>
+                        <p className="text-neutral-400 text-sm mt-1">
+                          配新学生时从这里挑话题。Part 1 的模板会出现在学生编辑器的「从模板库添加」里；
+                          Part 2 是所有人共用的题目，答案各人各写。
+                        </p>
                      </div>
-                     <button 
+                     <button
                       onClick={() => {
-                        if (!confirm("This will overwrite existing templates with the hardcoded library. Continue?")) return;
+                        if (!confirm(
+                          "把内置的 120 道样例题灌进模板库（自动分好 Part 1 / Part 2）。\n\n" +
+                          "同名话题会被覆盖。灌进来之后，配新学生时就能从模板库挑话题了。\n\n继续？"
+                        )) return;
                         const topics = Array.from(new Set(B1_QUESTIONS.map(q => q.topic)));
                         topics.forEach(t => {
                           const qs = B1_QUESTIONS.filter(q => q.topic === t).map(q => ({
@@ -1523,11 +1571,11 @@ export default function App() {
                           }));
                           saveGlobalTopic({ topicName: t, section: TRINITY_B1_TOPICS.indexOf(t) < 5 ? 'Part 1' : 'Part 2', questions: qs });
                         });
-                        alert("Library Initialized!");
+                        alert("模板库已就绪。现在去 Student Management，选中学生就能从模板库挑话题了。");
                       }}
                       className="px-6 py-3 bg-white text-black font-bold rounded-xl text-sm hover:bg-neutral-100 transition-all flex items-center gap-2"
                      >
-                       <RefreshCcw className="w-4 h-4" /> Reset to Defaults
+                       <RefreshCcw className="w-4 h-4" /> 用内置样例填充模板库
                      </button>
                   </div>
 
