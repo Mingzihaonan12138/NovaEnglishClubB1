@@ -826,11 +826,23 @@ export default function App() {
    */
   const clearAllAnswers = async () => {
     if (!selectedStudentId) return;
-    const topicCount = userTopics.length;
-    const convCount = userConvs.length;
+
+    // Count what is actually there. A student who never had answers written for
+    // them has nothing to clear, and saying so beats running and reporting
+    // success on zero documents, which reads as a broken button.
+    const part1WithAnswers = userTopics.filter(t => t.questions.some(q => q.suggestedAnswer?.trim())).length;
+    const part2WithAnswers = userConvs.filter(
+      c => Object.values(c.answers || {}).some(a => String(a ?? '').trim())
+    ).length;
+
+    if (part1WithAnswers === 0 && part2WithAnswers === 0) {
+      alert("这个学生本来就没有写过答案，不用清。\n\n（Part 2 的答案框留空时，学生看到的是「老师还没帮你写」，不会显示题库里别人的答案。）");
+      return;
+    }
+
     if (!confirm(
       `清空这个学生的所有参考答案，题目全部保留。\n\n` +
-      `影响：Part 1 的 ${topicCount} 个话题、Part 2 的 ${convCount} 个主题。\n\n` +
+      `有答案的：Part 1 的 ${part1WithAnswers} 个话题、Part 2 的 ${part2WithAnswers} 个主题。\n\n` +
       `这一步不能撤销，继续？`
     )) return;
 
@@ -1642,7 +1654,11 @@ export default function App() {
                                                   savePersonalizedConversation({ ...currentConv, answers: updatedAnswers });
                                                 }}
                                                 className="w-full p-2 text-[11px] border border-neutral-200 rounded-lg bg-white focus:border-black outline-none"
-                                                placeholder="Default answer will be used if empty..."
+                                                /* Said "Default answer will be used if empty", which stopped
+                                                   being true when Part 2 answers were isolated per student:
+                                                   the library's answers are the first student's real life, so
+                                                   nothing falls back to them any more. */
+                                                placeholder="留空的话，学生看到的是「老师还没帮你写这一题的答案」"
                                               />
                                            </div>
                                         </div>

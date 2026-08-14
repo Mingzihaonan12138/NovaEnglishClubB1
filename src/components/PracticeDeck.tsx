@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
-import { Volume2, X, Mic, Square, Bookmark, Loader2 } from 'lucide-react';
+import { Volume2, X, Mic, Square, Bookmark, Loader2, ChevronRight } from 'lucide-react';
 import { QuestionAnswer } from '../constants';
 import { StarMascot } from './Mascot';
 
@@ -149,12 +149,14 @@ export default function PracticeDeck({
         card is face up the student should have nothing to look at but the
         question and one button.
       */}
+      {/* A bare glyph in the corner read as decoration. It is the way out, so
+          it says so and has something to aim at. */}
       <button
         onClick={onExit}
-        aria-label="退出练习"
-        className="absolute top-0 right-0 p-2 text-muted hover:text-ink transition-colors"
+        className="absolute top-0 right-0 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-line bg-card text-sm font-semibold text-ink-soft hover:border-ink hover:text-ink transition-colors"
       >
-        <X className="w-5 h-5" />
+        <X className="w-4 h-4" />
+        退出
       </button>
 
       {!isRecording && (
@@ -255,7 +257,9 @@ export default function PracticeDeck({
       </div>
 
       {/* One primary action. Nothing competes with it. */}
-      <div className="mt-8 h-24 flex flex-col items-center gap-3">
+      {/* min-h rather than a fixed height: the buttons below are taller than
+          the grey text they replaced, and a fixed 6rem clipped them. */}
+      <div className="mt-8 min-h-[9rem] flex flex-col items-center gap-3">
         {!revealed ? (
           <p className="text-sm text-muted">点一下翻开</p>
         ) : isRecording ? (
@@ -285,19 +289,37 @@ export default function PracticeDeck({
                 录音只在你自己这边播放。想让老师听并给你反馈，跟老师说一声开通就好。
               </p>
             )}
-            <div className="flex items-center gap-5 text-xs text-muted">
-              {state?.keywords && !showHint && (
-                <button onClick={() => setShowHint(true)} className="hover:text-ink transition-colors">
-                  卡住了？
-                </button>
-              )}
+            {/*
+              These were grey text a shade above invisible. "下一张" is pressed
+              on every single card, so it earns a real button; hiding the loop's
+              own control is not calm, it is just hard to use. 卡住了 stays quiet
+              because it is the occasional one.
+            */}
+            <div className="flex items-center gap-2.5">
               {!showAnswer && (
-                <button onClick={() => setShowAnswer(true)} className="hover:text-ink transition-colors">
+                <button
+                  onClick={() => setShowAnswer(true)}
+                  className="px-4 py-2.5 rounded-xl border border-line bg-card text-sm font-semibold text-ink-soft hover:border-ink hover:text-ink transition-colors"
+                >
                   看答案
                 </button>
               )}
-              <button onClick={deal} className="hover:text-ink transition-colors">下一张</button>
+              <button
+                onClick={deal}
+                className="px-5 py-2.5 rounded-xl border border-ink bg-card text-sm font-semibold text-ink hover:bg-ink hover:text-page transition-colors inline-flex items-center gap-1.5"
+              >
+                下一张
+                <ChevronRight className="w-4 h-4" />
+              </button>
             </div>
+            {state?.keywords && !showHint && (
+              <button
+                onClick={() => setShowHint(true)}
+                className="text-xs text-muted hover:text-ink transition-colors"
+              >
+                卡住了？看几个关键词
+              </button>
+            )}
           </>
         )}
       </div>
