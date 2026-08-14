@@ -20,15 +20,22 @@ const GOLD = '#e5bb40';
  * also gives each eye its own element for the blink/glance animations.
  */
 /**
- * Pupils can travel this far inside the whites before they would clip: the
- * whites are rx 8.66 / ry 11.33 and the pupils rx 3.15 / ry 4.58, so the real
- * headroom is about 5.5 and 6.7. Staying under that keeps the eye reading as an
- * eye rather than as a shape sliding out of its socket.
+ * How far a pupil may travel, per direction.
+ *
+ * The artwork does not centre the pupils: both sit left of and below the middle
+ * of their whites (the right pupil by 3.1 and 3.3 user units), which is what
+ * gives the star its resting sideways glance. So the headroom is lopsided —
+ * about 8.6 to the right against 2.4 to the left, and 10 up against 3.4 down.
+ *
+ * A symmetric range therefore spent only a third of the rightward room while
+ * overshooting to the left, which read as "it barely looks right". These values
+ * follow the drawing's own asymmetry, kept a little inside the true limits so
+ * the pupil never touches the edge of the white.
  */
-const GAZE_X = 3.4;
-const GAZE_Y = 4.0;
-/** Past this distance the star is already looking as far as it can. */
-const GAZE_REACH = 320;
+const GAZE = { right: 6.0, left: 2.0, up: 5.5, down: 2.8 };
+
+/** Distance at which the star is already looking as far as it can. */
+const GAZE_REACH = 210;
 
 export function StarMascot({
   className = '',
@@ -41,8 +48,8 @@ export function StarMascot({
   // every mouse move, and re-rendering the tree that often would stutter.
   const x = useMotionValue(0);
   const y = useMotionValue(0);
-  const px = useSpring(x, { stiffness: 260, damping: 24, mass: 0.4 });
-  const py = useSpring(y, { stiffness: 260, damping: 24, mass: 0.4 });
+  const px = useSpring(x, { stiffness: 420, damping: 26, mass: 0.28 });
+  const py = useSpring(y, { stiffness: 420, damping: 26, mass: 0.28 });
 
   useEffect(() => {
     if (!followPointer || reduce) return;
@@ -54,8 +61,10 @@ export function StarMascot({
       const dy = e.clientY - (r.top + r.height / 2);
       const dist = Math.hypot(dx, dy) || 1;
       const reach = Math.min(dist / GAZE_REACH, 1);
-      x.set((dx / dist) * GAZE_X * reach);
-      y.set((dy / dist) * GAZE_Y * reach);
+      const ux = dx / dist;
+      const uy = dy / dist;
+      x.set(ux * (ux > 0 ? GAZE.right : GAZE.left) * reach);
+      y.set(uy * (uy > 0 ? GAZE.down : GAZE.up) * reach);
     };
     window.addEventListener('pointermove', onMove, { passive: true });
     return () => window.removeEventListener('pointermove', onMove);
