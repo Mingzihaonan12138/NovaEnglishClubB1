@@ -272,6 +272,29 @@ export async function saveUserTopic(topic: Omit<UserTopic, 'id' | 'updatedAt'>) 
   }
 }
 
+export async function deleteUserTopic(userId: string, topicName: string) {
+  try {
+    const q = query(
+      collection(db, 'userTopics'),
+      where('userId', '==', userId),
+      where('topicName', '==', topicName)
+    );
+    const snapshot = await getDocs(q);
+    for (const d of snapshot.docs) await deleteDoc(d.ref);
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, 'userTopics');
+  }
+}
+
+/**
+ * Question ids end up in an audio filename, so keep them to characters a path
+ * can hold. Prefixed per section to stay distinct from the bundled sample.
+ */
+export function newQuestionId(prefix: string): string {
+  const rand = Math.random().toString(36).slice(2, 7);
+  return `${prefix}_${Date.now().toString(36)}${rand}`;
+}
+
 export function subscribeToUserTopics(userId: string, callback: (topics: UserTopic[]) => void) {
   const q = query(collection(db, 'userTopics'), where('userId', '==', userId));
   return onSnapshot(q, (snapshot) => {

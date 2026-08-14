@@ -26,6 +26,7 @@ import {
   ListeningMarked, saveListeningMark,
   subscribeToStudentListeningMarks, subscribeToAllListeningMarks,
   ListeningQuestion, subscribeToListeningQuestions, subscribeToListeningAssignment,
+  deleteUserTopic, newQuestionId,
   apiHeaders
 } from './services/firebaseService';
 import ListeningDrill from './components/ListeningDrill';
@@ -174,6 +175,7 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importType, setImportType] = useState<'part1' | 'part2'>('part1');
   const [importJson, setImportJson] = useState("");
+  const [newTopicName, setNewTopicName] = useState("");
   const [importPreview, setImportPreview] = useState<any[]>([]);
   const [importError, setImportError] = useState("");
 
@@ -420,6 +422,41 @@ export default function App() {
    * family, and seeing it unlabelled looks exactly like a privacy leak.
    */
   const isShowingSampleData = isAdmin && userTopics.length === 0 && globalTopics.length === 0;
+
+  /** The Part 1 topics belonging to whichever student the teacher is editing. */
+  const studentPart1Topics = userTopics.map(t => t.topicName);
+
+  const addPart1Topic = async () => {
+    const name = newTopicName.trim();
+    if (!name || !selectedStudentId) return;
+    if (studentPart1Topics.some(t => t.toLowerCase() === name.toLowerCase())) {
+      alert(`「${name}」已经有了。`);
+      return;
+    }
+    await saveUserTopic({ userId: selectedStudentId, topicName: name, questions: [] });
+    setSelectedTopic(name);
+    setNewTopicName('');
+  };
+
+  const addPart1Question = async () => {
+    if (!selectedStudentId || !selectedTopic) return;
+    const topic = userTopics.find(t => t.topicName === selectedTopic);
+    const questions = [...(topic?.questions || []),
+      { id: newQuestionId('p1'), question: '', suggestedAnswer: '' }];
+    await saveUserTopic({ userId: selectedStudentId, topicName: selectedTopic, questions });
+  };
+
+  /**
+   * Adds a blank question to a shared Part 2 subject area. These live in
+   * globalTopics because the questions are the same for every candidate; only
+   * the answers, kept in userConversations, are personal.
+   */
+  const addPart2Question = async (topic: string) => {
+    const existing = globalTopics.find(gt => gt.topicName === topic);
+    const questions = [...(existing?.questions || []),
+      { id: newQuestionId('p2'), question: '', suggestedAnswer: '' }];
+    await saveGlobalTopic({ topicName: topic, section: 'Part 2', questions });
+  };
 
   /** One deck per Part 1 topic, with just enough state for the cover. */
   const part1Decks = (() => {
@@ -1215,14 +1252,68 @@ export default function App() {
                                   }} className="text-[10px] font-bold text-blue-600 hover:underline">Import JSON</button>
                                 </div>
                               </div>
-                              <select 
-                                value={TRINITY_B1_TOPICS.includes(selectedTopic) ? selectedTopic : ""}
-                                onChange={(e) => setSelectedTopic(e.target.value)}
-                                className="w-full p-4 bg-white border border-neutral-200 rounded-2xl font-bold text-sm shadow-sm"
-                              >
-                                {TRINITY_B1_TOPICS.slice(0, 5).map(t => <option key={t} value={t}>{t}</option>)}
-                              </select>
-                              
+                              {/*
+                                Part 1 topics are whatever this student chose with
+                                their teacher, so the list is theirs and editable.
+                                It used to be a fixed five taken from a constant,
+                                which meant a second student could not be given
+                                their own topics at all.
+                              */}
+                              <div className="space-y-2">
+                                <div className="flex gap-2">
+                                  <select
+                                    value={studentPart1Topics.includes(selectedTopic) ? selectedTopic : ""}
+                                    onChange={(e) => setSelectedTopic(e.target.value)}
+                                    className="flex-1 p-4 bg-white border border-neutral-200 rounded-2xl font-bold text-sm shadow-sm"
+                                  >
+                                    <option value="">
+                                      {studentPart1Topics.length ? "选择话题…" : "还没有话题，先在下面加一个"}
+                                    </option>
+                                    {studentPart1Topics.map(t => <option key={t} value={t}>{t}</option>)}
+                                  </select>
+                                  {selectedTopic && studentPart1Topics.includes(selectedTopic) && (
+                                    <button
+                                      onClick={async () => {
+                                        if (!selectedStudentId) return;
+                                        if (!confirm(`删除话题「${selectedTopic}」及其所有题目？`)) return;
+                                        await deleteUserTopic(selectedStudentId, selectedTopic);
+                                        setSelectedTopic("");
+                                      }}
+                                      className="px-4 rounded-2xl border border-neutral-200 bg-white text-neutral-400 hover:text-red-600 hover:border-red-200 transition-colors"
+                                      title="删除这个话题"
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  )}
+                                </div>
+
+                                <div className="flex gap-2">
+                                  <input
+                                    value={newTopicName}
+                                    onChange={(e) => setNewTopicName(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') addPart1Topic(); }}
+                                    placeholder="新话题名，例如 My job"
+                                    className="flex-1 p-3 bg-white border border-neutral-200 rounded-xl text-sm"
+                                  />
+                                  <button
+                                    onClick={addPart1Topic}
+                                    disabled={!newTopicName.trim() || !selectedStudentId}
+                                    className="px-4 py-3 bg-neutral-950 text-white rounded-xl text-xs font-bold disabled:opacity-40 flex items-center gap-1.5"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" /> 加话题
+                                  </button>
+                                </div>
+                              </div>
+
+                              {selectedTopic && studentPart1Topics.includes(selectedTopic) && (
+                                <button
+                                  onClick={addPart1Question}
+                                  className="w-full py-2.5 border border-dashed border-neutral-300 rounded-xl text-xs font-bold text-neutral-500 hover:border-neutral-950 hover:text-neutral-950 transition-colors flex items-center justify-center gap-1.5"
+                                >
+                                  <Plus className="w-3.5 h-3.5" /> 给「{selectedTopic}」加一题
+                                </button>
+                              )}
+
                               <div className="space-y-4 max-h-[500px] overflow-y-auto pr-2 scrollbar-thin">
                                 {filteredQuestions.map((q, idx) => (
                                   <div key={q.id} className="p-5 bg-neutral-50 rounded-2xl border border-neutral-100 space-y-3">
@@ -1294,7 +1385,16 @@ export default function App() {
                               <div className="space-y-4 max-h-[570px] overflow-y-auto pr-2 scrollbar-thin">
                                 {TRINITY_B1_TOPICS.slice(5).map(topic => (
                                   <div key={topic} className="p-5 bg-neutral-50 rounded-2xl border border-neutral-100">
-                                    <p className="text-[10px] font-bold text-neutral-400 mb-4 border-b border-neutral-200 pb-2">{topic}</p>
+                                    <div className="flex items-center justify-between mb-4 border-b border-neutral-200 pb-2">
+                                      <p className="text-[10px] font-bold text-neutral-400">{topic}</p>
+                                      <button
+                                        onClick={() => addPart2Question(topic)}
+                                        className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
+                                        title="题目会加进共享库，所有学生都看得到；答案各人各写"
+                                      >
+                                        <Plus className="w-3 h-3" /> 加一题
+                                      </button>
+                                    </div>
                                     <div className="space-y-4">
                                       {displayQuestions.filter(q => q.topic === topic).map(q => (
                                         <div key={q.id} className="space-y-2 pb-4 border-b border-neutral-100 last:border-0 last:pb-0">
