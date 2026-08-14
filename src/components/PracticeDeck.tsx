@@ -185,7 +185,9 @@ export default function PracticeDeck({
             style={{ backfaceVisibility: 'hidden', background: deckColor }}
           >
             <div className="absolute inset-2.5 rounded-[1.25rem] border border-white/25" />
-            <StarMascot className="w-28 h-28" />
+            {/* Face-down is the one moment with nothing to read, so the star
+                gets the space and watches the pointer while you decide. */}
+            <StarMascot className="w-56 h-56" followPointer />
           </div>
 
           {/* front */}
