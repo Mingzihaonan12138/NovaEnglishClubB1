@@ -1,50 +1,16 @@
-/**
- * Browser Speech Synthesis Fallback
- */
-function fallbackSpeak(text: string) {
-  return new Promise<void>((resolve) => {
-    // Clear any existing speech
-    window.speechSynthesis.cancel();
-    
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-GB'; // English (United Kingdom)
-    utterance.rate = 0.8;     // Slightly slower for B1
-    utterance.pitch = 1.0;
-    
-    utterance.onend = () => resolve();
-    utterance.onerror = (err) => {
-      console.error("SpeechSynthesis Error:", err);
-      resolve(); 
-    };
-    
-    window.speechSynthesis.speak(utterance);
-  });
-}
+import { speak, stopSpeaking } from '../lib/tts';
 
 /**
- * Main function to speak the question.
- * Prioritizes pre-generated audio file, falls back to browser TTS.
+ * Reads an examiner question aloud.
+ *
+ * The audioUrl argument is kept for the callers that still pass one, but it is
+ * no longer used: no audio files are deployed, and requesting them returned the
+ * SPA's own HTML with a 200, which the audio element then failed to decode. All
+ * speech now goes through src/lib/tts.ts, which prefers Azure's neural voice
+ * and only falls back to the browser's synthesis when that is unreachable.
  */
-export async function speakQuestion(text: string, audioUrl?: string): Promise<void> {
-  console.log(`Speaking question: ${text.substring(0, 30)}... (URL: ${audioUrl})`);
-
-  // Try the pre-recorded file first. Play it directly instead of probing for
-  // existence first — the old probe waited a fixed 2s before falling back,
-  // which stalled every question that had no audio file yet.
-  if (audioUrl) {
-    try {
-      return await new Promise<void>((resolve, reject) => {
-        const audio = new Audio(audioUrl);
-        audio.onended = () => resolve();
-        audio.onerror = () => reject(new Error(`Audio not available: ${audioUrl}`));
-        audio.play().catch(reject);
-      });
-    } catch (error) {
-      console.warn(`Local audio playback failed for ${audioUrl}:`, error);
-    }
-  }
-
-  // Fallback to Browser Speech Synthesis (Always works, free)
-  console.log("Using browser SpeechSynthesis...");
-  await fallbackSpeak(text);
+export async function speakQuestion(text: string, _audioUrl?: string): Promise<void> {
+  await speak(text);
 }
+
+export { stopSpeaking };

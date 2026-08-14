@@ -31,63 +31,30 @@ interface PracticeDeckProps {
   canSubmit: boolean;
 }
 
-const WEEK = 7 * 24 * 60 * 60 * 1000;
-
-/**
- * How likely a card is to be dealt.
- *
- * Deliberately the opposite of a conversation-card app, which deals only cards
- * you have not seen yet. This is exam revision: the questions a student stumbled
- * on have to come back more often, not disappear.
- */
-export function drawWeight(state: DeckCardState | undefined): number {
-  if (!state?.lastPractisedAt) return 5;   // never attempted
-  if (state.marked) return 4;              // student flagged it as hard
-  if (Date.now() - state.lastPractisedAt > WEEK) return 2;
-  return 1;                                // recent and not flagged
-}
-
-function pickWeighted(
-  questions: QuestionAnswer[],
-  cardState: Record<string, DeckCardState>,
-  exclude?: string
-): QuestionAnswer | null {
-  const pool = questions.filter(q => q.id !== exclude);
-  const candidates = pool.length > 0 ? pool : questions;
-  if (candidates.length === 0) return null;
-
-  const weights = candidates.map(q => drawWeight(cardState[q.id]));
-  const total = weights.reduce((a, b) => a + b, 0);
-  let roll = Math.random() * total;
-  for (let i = 0; i < candidates.length; i++) {
-    roll -= weights[i];
-    if (roll <= 0) return candidates[i];
-  }
-  return candidates[candidates.length - 1];
-}
-
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 
 /**
- * The crate: every card in the deck stood on its edge, the way records sit in a
- * box. Moving across the strip walks the row, and whichever card reaches the
- * middle turns to face you.
+ * The crate: every card stood on its edge, the way records sit in a box.
+ * Moving across the strip walks the row; the card under the cursor rises out of
+ * it. Nothing ever turns flat, because one face-on card among edge-on ones read
+ * as a different object and the row looked like a pile.
  *
- * The student picks rather than being dealt to. Weighting has not disappeared,
- * it has moved onto the cards themselves: never-practised cards stay bright and
- * upright, ones already done recede and dim in the order they were taken. The
- * pull toward the right card is something you can see instead of something the
- * machine does behind your back.
+ * The student picks rather than being dealt to, so weighting moved onto the
+ * cards: never-practised ones keep the deck's full colour while cards taken this
+ * session sink back and desaturate in the order they were taken. The pull toward
+ * the right card is visible instead of hidden in a probability.
  */
-const SPACING = 42;       // px between card spines
-const MAX_TURN = 74;      // degrees a card is turned away at the edges
+const SPACING = 30;   // px between spines
+const TURN = 74;      // every card sits at this angle; none of them face you
+const LIFT = 26;      // how far the card under the cursor rises out of the row
 
 function CardCrate({
-  questions, cardState, order, onPick,
+  questions, cardState, order, deckColor, onPick,
 }: {
   questions: QuestionAnswer[];
   cardState: Record<string, DeckCardState>;
   order: string[];
+  deckColor: string;
   onPick: (q: QuestionAnswer) => void;
 }) {
   const reduce = useReducedMotion();
@@ -95,6 +62,8 @@ function CardCrate({
   const raw = useMotionValue((questions.length - 1) / 2);
   const focus = useSpring(raw, { stiffness: 210, damping: 30, mass: 0.5 });
   const [centre, setCentre] = useState(Math.round((questions.length - 1) / 2));
+  /** The card on its way up and out; the row waits for it before switching. */
+  const [rising, setRising] = useState<string | null>(null);
 
   useEffect(() => {
     const unsub = focus.on('change', v => setCentre(Math.round(v)));
@@ -102,11 +71,21 @@ function CardCrate({
   }, [focus]);
 
   const track = (clientX: number) => {
+    if (rising) return;
     const el = wrap.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
     const t = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
     raw.set(t * (questions.length - 1));
+  };
+
+  const take = (q: QuestionAnswer) => {
+    if (rising) return;
+    if (reduce) return onPick(q);
+    // Lifted clear of the row first, so the card is seen leaving the deck
+    // rather than the deck simply being replaced.
+    setRising(q.id);
+    setTimeout(() => { setRising(null); onPick(q); }, 300);
   };
 
   return (
@@ -115,43 +94,42 @@ function CardCrate({
         ref={wrap}
         onPointerMove={(e) => track(e.clientX)}
         onPointerDown={(e) => track(e.clientX)}
-        className="relative h-[26rem] w-full cursor-ew-resize touch-pan-y"
-        style={{ perspective: 1400 }}
+        className="relative h-[24rem] w-full cursor-ew-resize touch-pan-y"
+        style={{ perspective: 1500 }}
       >
         {questions.map((q, i) => {
           const st = cardState[q.id];
           const done = order.indexOf(q.id);
           const fresh = !st?.lastPractisedAt && done === -1;
-          // Cards taken earlier in this session fade furthest back.
+          // Cards taken earlier this session sit furthest back.
           const age = done === -1 ? 0 : (order.length - done) / order.length;
 
-          // key sits on a wrapper because this project has no @types/react, so
-          // TypeScript does not know key is a reserved JSX attribute and would
-          // demand it be declared as a prop.
           return (
             <div key={q.id} style={{ display: 'contents' }}>
               <CrateCard
                 index={i}
                 focus={focus}
+                deckColor={deckColor}
                 isCentre={i === centre}
+                isRising={rising === q.id}
+                dimmed={!!rising && rising !== q.id}
                 fresh={fresh}
                 marked={!!st?.marked}
                 age={age}
-                reduce={!!reduce}
-                onPick={() => onPick(q)}
+                onPick={() => take(q)}
               />
             </div>
           );
         })}
       </div>
 
-      <div className="flex items-center justify-center gap-5 mt-1 text-xs text-muted">
+      <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1 mt-2 text-xs text-muted">
         <span className="inline-flex items-center gap-1.5">
-          <i className="w-2.5 h-2.5 rounded-sm" style={{ background: 'var(--color-gold)' }} />
+          <i className="w-2.5 h-3.5 rounded-[2px]" style={{ background: deckColor }} />
           没练过
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <i className="w-2.5 h-2.5 rounded-sm bg-muted opacity-40" />
+          <i className="w-2.5 h-3.5 rounded-[2px] opacity-30" style={{ background: deckColor }} />
           练过的往后退
         </span>
         <span>左右移动鼠标翻牌，点中间那张抽出来</span>
@@ -163,50 +141,62 @@ function CardCrate({
 interface CrateCardProps {
   index: number;
   focus: MotionValue<number>;
+  deckColor: string;
   isCentre: boolean;
+  isRising: boolean;
+  dimmed: boolean;
   fresh: boolean;
   marked: boolean;
   age: number;
-  reduce: boolean;
   onPick: () => void;
 }
 
+/**
+ * One card, always seen from its edge.
+ *
+ * Nothing in the row ever turns to face you: turning one card flat made it read
+ * as a different object from its neighbours and the row looked like a pile. The
+ * card under the cursor is marked by rising out of the deck and brightening
+ * instead, and it keeps the deck's own colour the whole way through, so the
+ * card you pull out is visibly the card you were looking at.
+ */
 function CrateCard({
-  index, focus, isCentre, fresh, marked, age, reduce, onPick,
+  index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age, onPick,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
   const x = useTransform(d, (v: number) => v * SPACING);
-  const rotateY = useTransform(d, (v: number) =>
-    Math.sign(v) * Math.min(Math.abs(v) * 26, MAX_TURN));
-  const scale = useTransform(d, (v: number) => 1 - Math.min(Math.abs(v) * 0.06, 0.34));
-  const z = useTransform(d, (v: number) => -Math.abs(v) * 34);
-  const opacity = useTransform(d, (v: number) => 1 - Math.min(Math.abs(v) * 0.13, 0.68));
+  const rotateY = useTransform(d, (v: number) => (v >= 0 ? -TURN : TURN));
+  const z = useTransform(d, (v: number) => -Math.abs(v) * 26);
 
   return (
     <motion.button
       onClick={onPick}
       aria-label={isCentre ? '抽这张' : '移到这张'}
-      className="absolute left-1/2 top-1/2 w-[15rem] h-[20rem] -ml-[7.5rem] -mt-[10rem] rounded-[1.4rem] origin-center"
+      className="absolute left-1/2 top-1/2 w-[13rem] h-[18rem] -ml-[6.5rem] -mt-[9rem] rounded-[1.1rem]"
       style={{
-        x, rotateY, scale, z, opacity,
-        zIndex: isCentre ? 60 : 30 - Math.abs(index),
+        x, rotateY, z,
+        background: deckColor,
         transformStyle: 'preserve-3d',
-        background: fresh ? 'var(--color-blue)' : 'var(--color-sand)',
-        filter: age ? `grayscale(${0.25 + age * 0.5})` : undefined,
-        boxShadow: isCentre ? '0 18px 44px rgba(34,30,26,.18)' : 'none',
-        transition: reduce ? 'none' : undefined,
+        zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index),
       }}
+      animate={{
+        y: isRising ? -170 : isCentre ? -LIFT : 0,
+        scale: isRising ? 1.06 : isCentre ? 1.04 : 1,
+        opacity: dimmed ? 0.25 : fresh ? 1 : 1 - age * 0.55,
+        filter: fresh ? 'saturate(1)' : `saturate(${1 - age * 0.7})`,
+      }}
+      transition={{ type: 'spring', stiffness: 260, damping: 26 }}
     >
-      <div className="absolute inset-2 rounded-[1.05rem] border border-white/20 pointer-events-none" />
-      <div className="w-full h-full flex items-center justify-center pointer-events-none">
-        <StarMascot className="w-24 h-24" />
-      </div>
+      {/* A hairline down the spine, so an edge-on card still reads as a card. */}
+      <div className="absolute inset-y-3 right-2 w-px bg-white/30 pointer-events-none" />
+      <div className="absolute inset-2 rounded-[0.85rem] border border-white/15 pointer-events-none" />
       {marked && (
-        <span className="absolute top-3 right-3 w-2.5 h-2.5 rounded-full bg-gold pointer-events-none" />
+        <span className="absolute top-3 right-3 w-2 h-2 rounded-full bg-gold pointer-events-none" />
       )}
     </motion.button>
   );
 }
+
 
 export default function PracticeDeck({
   deckName, deckColor, questions, cardState,
@@ -322,6 +312,7 @@ export default function PracticeDeck({
           questions={questions}
           cardState={cardState}
           order={order}
+          deckColor={deckColor}
           onPick={pick}
         />
       )}
