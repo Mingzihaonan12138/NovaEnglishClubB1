@@ -215,6 +215,15 @@ function CardCrate({
     return () => unsub();
   }, [focus]);
 
+  /** Which card the strip is pointing at, straight from a screen position. */
+  const indexAt = (clientX: number): number | null => {
+    const el = wrap.current;
+    if (!el) return null;
+    const r = el.getBoundingClientRect();
+    const t = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
+    return Math.round(t * (questions.length - 1));
+  };
+
   const track = (clientX: number) => {
     if (rising) return;
     const el = wrap.current;
@@ -222,6 +231,36 @@ function CardCrate({
     const r = el.getBoundingClientRect();
     const t = Math.min(Math.max((clientX - r.left) / r.width, 0), 1);
     raw.set(t * (questions.length - 1));
+  };
+
+  /**
+   * Take whatever card is under this point.
+   *
+   * Not whatever `centre` says, which is where this was broken on a phone.
+   * `centre` is state fed by the spring's own change events, so it only becomes
+   * true a couple of hundred milliseconds after the row starts moving. A mouse
+   * hides that completely — the pointer has already walked the whole strip
+   * before the click, so the spring settled long ago. A finger does not walk:
+   * pointerdown and click arrive within a few milliseconds of each other, the
+   * spring has barely left where it was, and the tap drew the card the student
+   * had been resting on rather than the one they touched. Every tap gave the
+   * wrong card.
+   *
+   * Reading the position directly removes the timing from the question, and the
+   * focus jumps rather than travels so the chosen card is at the middle
+   * immediately — a card flying in from the edge before being taken looks like
+   * the wrong one was picked even when it is the right one.
+   */
+  const takeAt = (clientX: number) => {
+    if (rising) return;
+    const i = indexAt(clientX);
+    if (i === null) return;
+    const q = questions[i];
+    if (!q) return;
+    raw.set(i);
+    focus.jump(i);
+    setCentre(i);
+    take(q);
   };
 
   useEffect(() => {
@@ -257,14 +296,17 @@ function CardCrate({
         Which card is in focus comes from where the pointer is horizontally, but
         that card is always drawn in the middle, so the pointer was almost never
         over it: clicking landed on empty space or on some other card. Moving
-        browses, clicking takes whatever is currently raised, wherever the
-        pointer happens to be.
+        browses, clicking takes whatever the position under it means.
+
+        The same handler serves a mouse and a finger. A mouse browses by moving
+        and takes by clicking; a finger browses by dragging and takes by
+        tapping. Both end in a position, and the position is all that is read.
       */}
       <div
         ref={wrap}
         onPointerMove={(e) => track(e.clientX)}
         onPointerDown={(e) => track(e.clientX)}
-        onClick={() => { const q = questions[centre]; if (q) take(q); }}
+        onClick={(e) => takeAt(e.clientX)}
         role="button"
         aria-label={`抽出第 ${centre + 1} 张，共 ${questions.length} 张`}
         className="relative h-[30rem] w-full cursor-pointer touch-pan-y"
@@ -355,7 +397,10 @@ function CardCrate({
           <i className="w-2.5 h-3.5 rounded-[2px] opacity-30" style={{ background: deckColor }} />
           练过的往后退
         </span>
-        <span>左右移动鼠标翻牌，点中间那张抽出来</span>
+        {/* No longer says "move the mouse". Most of these students practise on
+            a phone, where there is no mouse to move — and the instruction was
+            describing a gesture the interface did not actually require. */}
+        <span>左右滑动挑牌，点一下抽出来</span>
       </div>
     </div>
   );
@@ -606,9 +651,12 @@ export default function PracticeDeck({
         退出
       </button>
 
+      {/* The deck's name belongs here only while choosing. Once a card is out
+          the card itself says it, on the coloured band, and printing it twice on
+          one screen is the same duplication we keep taking out. */}
       {!isRecording && (
         <p className="absolute top-1 left-0 text-xs text-muted">
-          {deckName} · {picking ? `共 ${questions.length} 张` : `第 ${drawn} 张`}
+          {picking ? `${deckName} · 共 ${questions.length} 张` : `第 ${drawn} 张`}
         </p>
       )}
 
@@ -650,11 +698,40 @@ export default function PracticeDeck({
           </div>
 
           {/* front */}
+          {/*
+            The turned card keeps the deck's colour.
+
+            It did not, and that was the largest hole in the whole thing: a
+            student spends nearly all their time on this face, and it was plain
+            cream with a grey label — the palette, and every hour spent on which
+            star reads against which card, stopped existing at the exact moment
+            the card was turned over. You could not tell which deck you were in
+            while answering.
+
+            A band rather than a wash, because the question has to stay the most
+            legible thing on the page. It carries the topic in the same ink the
+            star is printed in on that deck, which is already measured at 4:1 or
+            better against every one of the eleven, so this needs no separate
+            check. The rest of the card stays cream and the question stays black
+            on it.
+          */}
           <div
-            className="absolute inset-0 rounded-[1.6rem] bg-card border border-line p-7 flex flex-col"
-            style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
+            className="absolute inset-0 rounded-[1.6rem] bg-card overflow-hidden flex flex-col"
+            style={{
+              backfaceVisibility: 'hidden',
+              transform: 'rotateY(180deg)',
+              border: `1px solid ${deckColor}`,
+            }}
           >
-            <p className="text-[11px] tracking-wide text-muted mb-3 shrink-0">{current?.topic}</p>
+            <div className="shrink-0 px-6 py-3" style={{ background: deckColor }}>
+              <p
+                className="text-[11px] tracking-wide font-semibold truncate"
+                style={{ color: starInk(deckColor) }}
+              >
+                {current?.topic}
+              </p>
+            </div>
+            <div className="flex-1 min-h-0 flex flex-col px-7 pt-5 pb-6">
             {/*
               A question and its rephrasings are one question, so it is set as
               one: the wording the examiner will use at full size, the others
@@ -734,6 +811,7 @@ export default function PracticeDeck({
               >
                 <Bookmark className="w-4 h-4" fill={state?.marked ? 'currentColor' : 'none'} />
               </button>
+            </div>
             </div>
           </div>
         </motion.div>
