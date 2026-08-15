@@ -33,7 +33,9 @@ import ListeningDrill from './components/ListeningDrill';
 import ListeningSetupPanel from './components/ListeningSetupPanel';
 import Mascot, { StarMascot } from './components/Mascot';
 import PracticeDeck, { DeckCardState } from './components/PracticeDeck';
+import DeckStack from './components/DeckStack';
 import { resolveQuestions, isShowingSample } from './lib/resolveQuestions';
+import { parsePastedQuestions } from './lib/parsePaste';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocumentSnapshot, DocumentData, where } from 'firebase/firestore';
 
@@ -42,69 +44,6 @@ import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocum
  * The colour only ever appears on card backs and deck covers, never in the
  * answering view.
  */
-/**
- * Reads a block of pasted text into question/answer pairs.
- *
- * The teacher writes this material in a document, not in a JSON editor, so the
- * import has to accept what a copy-paste actually looks like. Two shapes cover
- * nearly everything people type:
- *
- *   一行一题     What are her hobbies? | Dressing up and shopping.
- *   问答分行     What are her hobbies?
- *                Dressing up and shopping.
- *                (blank line between questions)
- *
- * Leading numbering like "1." or "3、" is stripped, because prepared lists
- * almost always carry it. JSON still parses, so anything exported earlier keeps
- * working.
- */
-function parsePastedQuestions(raw: string): { question: string; answer: string }[] {
-  const text = (raw || '').trim();
-  if (!text) return [];
-
-  // Anything previously exported from this app.
-  try {
-    const json = JSON.parse(text);
-    if (Array.isArray(json)) {
-      return json
-        .filter(o => o && typeof o.question === 'string')
-        .map(o => ({ question: o.question.trim(), answer: (o.suggestedAnswer || '').trim() }));
-    }
-    if (json && typeof json === 'object') {
-      return Object.entries(json).map(([q, a]) => ({ question: q.trim(), answer: String(a).trim() }));
-    }
-  } catch {
-    // Not JSON, which is the normal case.
-  }
-
-  const strip = (s: string) => s.replace(/^\s*(?:\d+\s*[.、)．]|[-*•])\s*/, '').trim();
-  const SEP = /\s*[|｜\t]\s*/;
-
-  const lines = text.split(/\r?\n/);
-  const nonEmpty = lines.filter(l => l.trim());
-  const withSep = nonEmpty.filter(l => SEP.test(l)).length;
-
-  // If most lines carry a separator, every line is its own pair.
-  if (withSep >= Math.ceil(nonEmpty.length / 2)) {
-    return nonEmpty
-      .map(l => {
-        const [q, ...rest] = l.split(SEP);
-        return { question: strip(q), answer: rest.join(' ').trim() };
-      })
-      .filter(p => p.question);
-  }
-
-  // Otherwise blank lines separate questions: first line asks, the rest answers.
-  return text
-    .split(/\n\s*\n/)
-    .map(block => {
-      const rows = block.split(/\r?\n/).map(r => r.trim()).filter(Boolean);
-      if (!rows.length) return null;
-      return { question: strip(rows[0]), answer: rows.slice(1).join(' ').trim() };
-    })
-    .filter((p): p is { question: string; answer: string } => !!p && !!p.question);
-}
-
 /** The Express side of this app only exists when running it locally. */
 const isLocalDev =
   typeof window !== 'undefined' &&
@@ -2009,9 +1948,9 @@ export default function App() {
             */}
             {[
               { label: 'Part 1', tag: '你自己选的', tagClass: 'text-gold-ink bg-gold-soft',
-                lede: '考官只会问你准备过的生活。', decks: part1Decks, cols: 'lg:grid-cols-5' },
+                lede: '考官只会问你准备过的生活。', decks: part1Decks },
               { label: 'Part 2', tag: '考纲固定', tagClass: 'text-blue-ink bg-blue-soft',
-                lede: '所有考生题目一样，答案是你自己的。', decks: part2Decks, cols: 'lg:grid-cols-3' },
+                lede: '所有考生题目一样，答案是你自己的。', decks: part2Decks },
             ].filter(g => g.decks.length > 0).map(g => (
               <div key={g.label} className="max-w-4xl mx-auto w-full">
                 <div className="flex items-baseline gap-3 mb-1">
@@ -2020,19 +1959,24 @@ export default function App() {
                   <span className="ml-auto text-xs text-muted">{g.decks.length} 副牌</span>
                 </div>
                 <p className="text-sm text-ink-soft mb-4">{g.lede}</p>
-                <div className={`grid grid-cols-2 sm:grid-cols-3 ${g.cols} gap-3`}>
+                {/* Both parts use the same column count so a Part 1 deck and a
+                    Part 2 deck are the same size: they are the same kind of
+                    object, and the grid should not imply otherwise. */}
+                <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-x-4 gap-y-6">
+                  {/* display:contents so the wrapper carrying the key is
+                      invisible to the grid and the button stays the grid item.
+                      React's `key` cannot go on DeckStack directly without
+                      @types/react, which this file does without. */}
                   {g.decks.map(d => (
-                    <button
-                      key={d.topic}
-                      onClick={() => setActiveDeck(d.topic)}
-                      className="text-left rounded-2xl p-4 h-28 flex flex-col justify-between text-white transition-transform hover:-translate-y-0.5"
-                      style={{ background: deckColour(d.topic) }}
-                    >
-                      <span className="font-semibold text-sm leading-tight">{d.topic}</span>
-                      <span className="text-[11px] opacity-85">
-                        {d.total} 张{d.fresh > 0 ? ` · 没练过 ${d.fresh}` : ' · 全练过了'}
-                      </span>
-                    </button>
+                    <div key={d.topic} style={{ display: 'contents' }}>
+                    <DeckStack
+                      topic={d.topic}
+                      colour={deckColour(d.topic)}
+                      total={d.total}
+                      fresh={d.fresh}
+                      onOpen={() => setActiveDeck(d.topic)}
+                    />
+                    </div>
                   ))}
                 </div>
               </div>

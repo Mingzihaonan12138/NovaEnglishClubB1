@@ -75,16 +75,14 @@ function isLight(hex: string): boolean {
   return luminance(hex) > 0.33;
 }
 
-function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: string; radius?: string; followPointer?: boolean }) {
+export function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: string; radius?: string; followPointer?: boolean }) {
   // The gold deck is the same colour as the star, so a gold star on it would be
   // an invisible mark on a blank rectangle. Light cards print in ink instead.
   const light = isLight(color);
   const rule = light ? 'border-black/20' : 'border-white/25';
   const ruleFaint = light ? 'border-black/10' : 'border-white/12';
   const dot = light ? 'bg-black/20' : 'bg-white/30';
-  const ring = light ? 'border-black/15' : 'border-white/20';
   const star = starInk(color);
-  const leadEdge = light ? 'bg-white/60' : 'bg-white/45';
 
   return (
     <div className="absolute inset-0 overflow-hidden" style={{ background: color, borderRadius: radius }}>
@@ -92,12 +90,13 @@ function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: 
       <div className={`absolute inset-[6%] rounded-[0.75rem] border ${rule} pointer-events-none`} />
       <div className={`absolute inset-[9%] rounded-[0.6rem] border ${ruleFaint} pointer-events-none`} />
 
-      {/* The mark, big enough to read foreshortened */}
+      {/* The mark, big enough to read foreshortened. The ring that used to circle
+          it was a mistake at these angles: a circle compressed to a tenth of its
+          width stops reading as a foreshortened circle and starts reading as an
+          oval that was drawn that way, which fought the turn instead of showing
+          it. The frame and the corner marks carry the print on their own. */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <div className="relative w-[62%] aspect-square flex items-center justify-center">
-          <div className={`absolute inset-0 rounded-full border ${ring}`} />
-          <StarMascot className="w-[76%] h-[76%] drop-shadow-sm" followPointer={followPointer} fill={star} />
-        </div>
+        <StarMascot className="w-[47%] h-[47%] drop-shadow-sm" followPointer={followPointer} fill={star} />
       </div>
 
       {/* Corner marks, so the print continues to the edges rather than floating */}
@@ -105,12 +104,57 @@ function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: 
         <span key={pos} className={`absolute ${pos} w-1.5 h-1.5 rounded-full ${dot} pointer-events-none`} />
       ))}
 
-      {/* Paper edges: lit on the leading side, shaded on the trailing one, which
-          is what separates one card from the next when they share a colour. */}
-      <div className={`absolute inset-y-0 left-0 w-[3px] ${leadEdge} pointer-events-none`} />
-      <div className="absolute inset-y-0 right-0 w-[3px] bg-black/25 pointer-events-none" />
+      {/*
+        Light across the face, falling the way the card is turned.
+
+        The cards lean left, so their right-hand edge is the one swung toward
+        the viewer and their left-hand edge is the one going away. The old code
+        had this exactly backwards — a bright strip down the receding edge and a
+        black one down the approaching edge — so the shading argued with the
+        geometry, and a squeezed rectangle with contradictory lighting is
+        precisely a shape that has no readable depth. Near edge catches the
+        light, far edge falls into shade.
+      */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          borderRadius: radius,
+          background:
+            'linear-gradient(97deg, rgba(0,0,0,.34) 0%, rgba(0,0,0,.10) 34%, rgba(0,0,0,0) 62%, rgba(255,255,255,.16) 100%)',
+        }}
+      />
+      <div className="absolute inset-y-0 right-0 w-[2px] bg-white/55 pointer-events-none" />
       <div className="absolute inset-0 pointer-events-none" style={{ borderRadius: radius, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.22)' }} />
     </div>
+  );
+}
+
+/** How thick a card is, in px. Enough to catch light, not enough to be a brick. */
+const THICK = 7;
+
+/**
+ * The cut edge of the paper.
+ *
+ * Half of why the reference deck reads as a stack of physical objects is that
+ * its cards are solids: you see the white edge of every one. A plane has no
+ * thickness at any angle, so however well it is lit it stays a coloured
+ * rectangle. This is a real face standing at ninety degrees to the front of the
+ * card, hinged on the right-hand edge — the near one — and running backwards
+ * away from the viewer, which is where the body of the card actually is.
+ */
+function CardEdge() {
+  return (
+    <div
+      aria-hidden
+      className="absolute top-[2%] bottom-[2%] right-0 pointer-events-none"
+      style={{
+        width: THICK,
+        transformOrigin: 'right center',
+        transform: 'rotateY(-90deg)',
+        background: 'linear-gradient(to right, rgba(160,148,132,.9), #f7f1e8 55%, #e6ddd0)',
+        borderRadius: '1px',
+      }}
+    />
   );
 }
 
@@ -127,8 +171,39 @@ const fmt = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '
  * session sink back and desaturate in the order they were taken. The pull toward
  * the right card is visible instead of hidden in a probability.
  */
-const SPACING = 36;   // px between spines: cards still overlap, but read as separate
-const TURN = 66;      // every card sits at this angle; none of them face you
+/**
+ * The row is an arc, not a line.
+ *
+ * Every card used to sit at the same angle, and the card in focus is always
+ * drawn dead centre — which is where the vanishing point is. A rotation at the
+ * vanishing point produces no perspective at all: the card is scaled to
+ * cos(angle) of its width and nothing else happens to it. So it read as a
+ * rectangle that had been squashed rather than one that had been turned, and
+ * the two cues cancelled out.
+ *
+ * The cards now lie tangent to a circle, the way the reference deck does. Each
+ * one is RADIUS away from a centre behind the row and ARC degrees round from
+ * its neighbour, so no two share an angle: the row opens up at one end and
+ * closes toward the other, which is the curve itself becoming visible. They
+ * still all lean the same way — this is one continuous arc, not two halves
+ * turned to face each other, which is what looked wrong before.
+ */
+const TURN = 64;      // the lean the card at the focus sits at
+/**
+ * How much of the circle separates two neighbours.
+ *
+ * This is easy to overspend, and the reason is not the rotation itself. A card
+ * turned this far has its two vertical edges about 240px apart in depth, so at
+ * the ends of the row — where the card is also well off the eye's axis — one
+ * edge is magnified and the other shrunk, and the projected widths spread far
+ * faster than the cosine of the angle suggests. At 2.6° over a ten-card row the
+ * widest card measured 3.9 times the narrowest and the end of the row was
+ * effectively facing front, when the point is that none of them face you. At 1°
+ * the spread is 2.3 and the widest card is still only 60% of its full width:
+ * unmistakably a curve, still unmistakably edge-on.
+ */
+const ARC = 1.0;
+const RADIUS = 3400;  // px; with ARC this leaves ~59px of each card in view
 const LIFT = 70;      // how far the card under the cursor rises out of the row
 /**
  * Cards near the cursor ease apart a little. This used to be large enough to
@@ -137,7 +212,8 @@ const LIFT = 70;      // how far the card under the cursor rises out of the row
  * cards hide one another, and what marks one out is that it is lifted, not that
  * the deck has opened around it.
  */
-const PART = 15;
+const PART = 12;
+const RAD = Math.PI / 180;
 
 function CardCrate({
   questions, cardState, order, deckColor, onPick,
@@ -214,7 +290,28 @@ function CardCrate({
         role="button"
         aria-label={`抽出第 ${centre + 1} 张，共 ${questions.length} 张`}
         className="relative h-[30rem] w-full cursor-pointer touch-pan-y"
-        style={{ perspective: 1700 }}
+        /*
+          The eye sits above the deck, looking down into it the way you look
+          into a crate of records — and squarely in front of it horizontally.
+
+          Both halves of that matter. Dropping the eye is what supplies the
+          perspective: with the vanishing point at dead centre the focused card
+          sat exactly on it, and an element on the vanishing point gets no
+          perspective division at all — its edges stay parallel however far it
+          is turned, which is why a card at 66° read as a rectangle that had
+          been squashed rather than one that had been turned. Off the axis
+          vertically, its top and bottom edges converge, and it is seen at an
+          angle.
+
+          Moving the eye sideways as well was tried and abandoned. Horizontal
+          offset makes perspective swing a card's face toward you in proportion
+          to how far along the row it is, and that term is linear and large: it
+          took the widest card to 3.9 times the narrowest and left the end of
+          the row facing front, when the whole point is that none of them face
+          you. Centred horizontally, that swing is symmetric and small, and the
+          arc is left to supply the variation on its own.
+        */
+        style={{ perspective: 2400, perspectiveOrigin: '50% 30%' }}
       >
         {/* Something to stand on. The row was floating in an empty page, which
             is most of why it looked unfinished: a lit patch of table and a
@@ -247,6 +344,7 @@ function CardCrate({
                 focus={focus}
                 deckColor={deckColor}
                 isCentre={i === centre}
+                depth={Math.abs(i - centre)}
                 isRising={rising === q.id}
                 dimmed={!!rising && rising !== q.id}
                 fresh={fresh}
@@ -278,6 +376,8 @@ interface CrateCardProps {
   focus: MotionValue<number>;
   deckColor: string;
   isCentre: boolean;
+  /** How many cards from the focus, for painter order. */
+  depth: number;
   isRising: boolean;
   dimmed: boolean;
   fresh: boolean;
@@ -296,54 +396,71 @@ interface CrateCardProps {
  * so the card pulled out is visibly the card that was looked at.
  */
 function CrateCard({
-  index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age,
+  index, focus, deckColor, isCentre, depth, isRising, dimmed, fresh, marked, age,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
-  // The row parts around the cursor so that one card is legible among cards of
-  // a single colour. tanh rather than sign: sign flips the whole PART term the
-  // instant d crosses zero, which threw a card across the centre line in one
-  // frame. tanh gives the same widening either side and passes through smoothly.
-  const x = useTransform(d, (v: number) => v * SPACING + PART * Math.tanh(v / 1.2));
-  const z = useTransform(d, (v: number) => -Math.abs(v) * 34);
+  // Position on the circle. The row parts a little around the cursor on top of
+  // that, so one card is legible among cards of a single colour — tanh rather
+  // than sign, because sign flips the whole PART term the instant d crosses
+  // zero, which threw a card across the centre line in one frame.
+  const x = useTransform(d, (v: number) => RADIUS * Math.sin(v * ARC * RAD) + PART * Math.tanh(v / 1.2));
+  const z = useTransform(d, (v: number) => RADIUS * (Math.cos(v * ARC * RAD) - 1));
+  // Tangent to the circle at that point: the card's own share of the curve.
+  const spin = useTransform(d, (v: number) => -TURN + v * ARC);
   // Distant cards go soft, because nothing says "further away" as plainly as
   // being out of focus. Softening began immediately though, so the cards either
   // side of the one in focus — the ones you are about to move onto — were
   // already smeared. Blur now holds off until the second neighbour and tops out
   // at under 2px: enough to give the row depth, not enough to fog it.
+  // Now that the arc supplies real depth, the blur has much less work to do —
+  // it was standing in for depth cues that were not there, and at 1.8px it was
+  // fogging cards the student was about to move onto.
   const blur = useTransform(d, (v: number) =>
-    `blur(${Math.min(Math.max(Math.abs(v) - 0.8, 0) * 0.55, 1.8)}px)`);
+    `blur(${Math.min(Math.max(Math.abs(v) - 1.6, 0) * 0.38, 0.9)}px)`);
   // Cards deep in the stack are almost entirely covered anyway; fading the far
   // ones keeps the row from looking like a fan of separate objects.
-  const fade = useTransform(d, (v: number) => Math.max(1 - Math.max(Math.abs(v) - 3, 0) * 0.18, 0.35));
+  const fade = useTransform(d, (v: number) => Math.max(1 - Math.max(Math.abs(v) - 4, 0) * 0.14, 0.5));
+
+  const lit = isCentre || isRising;
 
   return (
-    // Position is a motion value and lives on the outside; the turn is animated
-    // and lives on the inside, so taking a card can rotate it without fighting
-    // the value that places it.
+    /*
+      Three layers, because each one has to be allowed to do its job.
+
+      The outer one alone is three-dimensional: it carries the place on the arc,
+      the card's share of the curve, and the lift. It deliberately has no filter
+      and no opacity, because both of those force a subtree back into 2D — which
+      would flatten the paper edge into the face and undo the whole point of it.
+      The depth cues and the practised-state cues then sit on plain wrappers
+      inside, where flattening costs nothing.
+    */
     <motion.div
       className="absolute left-1/2 top-1/2 w-[16rem] h-[22rem] -ml-[8rem] -mt-[11rem]"
-      style={{ x, z, filter: blur, opacity: fade, transformStyle: 'preserve-3d', zIndex: isRising ? 99 : isCentre ? 60 : 40 - Math.abs(index) }}
+      style={{
+        x, z, rotateY: spin,
+        transformStyle: 'preserve-3d',
+        pointerEvents: 'none',
+        zIndex: isRising ? 99 : 60 - depth,
+      }}
+      animate={{
+        // The card keeps its lean the whole way up: it is drawn straight out of
+        // the queue the way you pull a record from a crate. Turning it flat here
+        // made it stop being a card in a row and become a different object
+        // mid-animation; the turn belongs to the flip that follows, where it
+        // becomes the question.
+        y: isRising ? -260 : isCentre ? -LIFT : 0,
+        scale: isRising ? 1.04 : isCentre ? 1.05 : 0.94,
+      }}
+      transition={{ type: 'spring', stiffness: 260, damping: 26 }}
     >
-      <div className="w-full h-full" style={{ pointerEvents: 'none' }}>
+      <CardEdge />
+      <motion.div className="absolute inset-0" style={{ filter: blur, opacity: fade }}>
         <motion.div
-          className="w-full h-full rounded-[1.1rem] relative"
-          style={{ transformStyle: 'preserve-3d' }}
+          className="absolute inset-0 rounded-[1.1rem]"
           animate={{
-            // Every card keeps the same lean, including the one being taken:
-            // it is drawn straight up out of the queue the way you pull a record
-            // from a crate. Turning it flat here made it stop being a card in a
-            // row and become a different object mid-animation; the turn belongs
-            // to the flip that follows, where it becomes the question.
-            rotateY: -TURN,
-            y: isRising ? -260 : isCentre ? -LIFT : 0,
-            scale: isRising ? 1.04 : isCentre ? 1.05 : 0.94,
             opacity: dimmed ? 0.18 : fresh ? 1 : 1 - age * 0.5,
-            filter: fresh
-              ? `saturate(1) brightness(${isCentre || isRising ? 1.1 : 0.82})`
-              : `saturate(${1 - age * 0.7}) brightness(${isCentre || isRising ? 1.1 : 0.82})`,
-            boxShadow: isCentre || isRising
-              ? '0 26px 60px rgba(34,30,26,.32)'
-              : '0 2px 6px rgba(34,30,26,.18)',
+            filter: `saturate(${fresh ? 1 : 1 - age * 0.7}) brightness(${lit ? 1.1 : 0.82})`,
+            boxShadow: lit ? '0 26px 60px rgba(34,30,26,.32)' : '0 2px 6px rgba(34,30,26,.18)',
           }}
           transition={{ type: 'spring', stiffness: 260, damping: 26 }}
         >
@@ -352,7 +469,7 @@ function CrateCard({
             <span className="absolute top-[7%] left-[7%] w-2.5 h-2.5 rounded-full bg-gold ring-2 ring-white/40 pointer-events-none" />
           )}
         </motion.div>
-      </div>
+      </motion.div>
     </motion.div>
   );
 }

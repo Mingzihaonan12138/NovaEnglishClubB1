@@ -10,8 +10,8 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx scripts/test-resolve.ts",
-    "check": "tsc --noEmit && tsx scripts/test-resolve.ts && vite build"
+    "test": "tsx scripts/test-resolve.ts && tsx scripts/test-paste.ts",
+    "check": "tsc --noEmit && npm test && vite build"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",
