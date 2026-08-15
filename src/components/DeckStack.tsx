@@ -44,23 +44,43 @@ export default function DeckStack({
           of saying there are twenty more behind it. They lean apart a little on
           hover, which is the same gesture the crate makes.
 
-          They turn about their middles, not their bottom edges, and that is
-          what buys the angle. Rotating about the bottom makes the lever arm the
-          whole height of the card, so each degree throws the top corners about
-          4px sideways — out of the grid column and into the neighbouring stack
-          — and the fan had to be cut to four degrees to stop the row colliding
-          with itself, by which point it was too small to see. About the middle
-          the arm is half as long, so eight degrees costs the same 16px of reach
-          as four did. Twice the fan, same footprint.
+          At rest the pile is square. A deck sitting on a table is tidy — the
+          splay is what happens when a hand touches it — and eleven permanently
+          fanned piles made the page look strewn about rather than laid out. So
+          the resting state is a few pixels of offset, enough to see that there
+          are three cards and nothing more, and the fan belongs entirely to the
+          hover.
+
+          They turn about their middles rather than their bottom edges, and that
+          is what buys the angle. Rotating about the bottom makes the lever arm
+          the whole height of the card, so each degree throws the top corners
+          about 4px sideways — out of the grid column and into the neighbouring
+          stack — and the fan had to be cut to four degrees to stop the row
+          colliding with itself, by which point it could not be seen. About the
+          middle the arm is halved, so eleven degrees costs about what four did.
+        */}
+        {/*
+          The splay runs one way, in equal steps: 0, −5.5°, −11° from the front
+          card back. It used to be −11°, 0°, +7° — three angles pointing three
+          ways with no relation between them — and the eye read that as an X
+          with a card lying across it rather than as a fan. A fan is an
+          arithmetic sequence in one direction; that is the whole of what makes
+          it look like a fan and not like a spill. The offsets at rest step the
+          same way for the same reason, so opening the deck is the one gesture
+          getting larger rather than a different arrangement appearing.
         */}
         <div
-          className="absolute inset-0 origin-center transition-transform duration-200 -rotate-[8deg] group-hover:-rotate-[12deg]"
+          className="absolute inset-0 origin-center transition-transform duration-200 ease-out
+                     -translate-x-[5px] -translate-y-[4px]
+                     group-hover:-translate-x-[9px] group-hover:-translate-y-[5px] group-hover:-rotate-[11deg]"
           style={{ filter: 'brightness(0.82) saturate(0.9)' }}
         >
           <CardBack color={colour} radius={STACK_CARD.radius} />
         </div>
         <div
-          className="absolute inset-0 origin-center transition-transform duration-200 rotate-[5deg] group-hover:rotate-[8deg]"
+          className="absolute inset-0 origin-center transition-transform duration-200 ease-out
+                     -translate-x-[2px] -translate-y-[2px]
+                     group-hover:-translate-x-[4px] group-hover:-translate-y-[2px] group-hover:-rotate-[5.5deg]"
           style={{ filter: 'brightness(0.9) saturate(0.95)' }}
         >
           <CardBack color={colour} radius={STACK_CARD.radius} />
