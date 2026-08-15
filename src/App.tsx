@@ -32,6 +32,7 @@ import {
 import ListeningDrill from './components/ListeningDrill';
 import ListeningSetupPanel from './components/ListeningSetupPanel';
 import Mascot, { StarMascot } from './components/Mascot';
+import FullLogo from './components/FullLogo';
 import PracticeDeck, { DeckCardState } from './components/PracticeDeck';
 import DeckStack from './components/DeckStack';
 import { resolveQuestions, isShowingSample } from './lib/resolveQuestions';
@@ -1919,11 +1920,18 @@ export default function App() {
         ) : !activeModule ? (
           <div className="space-y-12 animate-in fade-in duration-500 py-6 select-none leading-normal">
             <div className="text-center space-y-4 max-w-xl mx-auto flex flex-col items-center">
-              <Mascot
-                size="md"
-                speechBubble="慢慢来，说错了也没关系。"
-                className="mb-2"
-              />
+              {/*
+                The whole logo, not the star on its own.
+
+                The black tooltip that used to float above it is gone with it.
+                The logo already contains a speech bubble — that is what the
+                little blue one beside the star is — so a second bubble in a
+                different style, sitting on top of the sparks, was the artwork
+                arguing with itself. The line it carried is worth keeping, so it
+                sits under the mark as the club's own words.
+              */}
+              <FullLogo className="w-52 h-auto" />
+              <p className="text-sm text-ink-soft -mt-1">慢慢来，说错了也没关系。</p>
               <h2 className="text-4xl md:text-5xl font-display font-semibold tracking-tight text-ink">
                 What do you want to practise?
               </h2>
