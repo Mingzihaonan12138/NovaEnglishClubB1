@@ -94,9 +94,16 @@ export function CardBack({ color, radius = '1.1rem', followPointer = false }: { 
           it was a mistake at these angles: a circle compressed to a tenth of its
           width stops reading as a foreshortened circle and starts reading as an
           oval that was drawn that way, which fought the turn instead of showing
-          it. The frame and the corner marks carry the print on their own. */}
+          it. The frame and the corner marks carry the print on their own.
+
+          The square wrapper is load-bearing. Sizing the star w-[47%] h-[47%]
+          takes 47% of the card's width and 47% of its height, and the card is
+          not square, so the star came out stretched a third taller than it is
+          drawn. */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-        <StarMascot className="w-[47%] h-[47%] drop-shadow-sm" followPointer={followPointer} fill={star} />
+        <div className="w-[47%] aspect-square flex items-center justify-center">
+          <StarMascot className="w-full h-full drop-shadow-sm" followPointer={followPointer} fill={star} />
+        </div>
       </div>
 
       {/* Corner marks, so the print continues to the edges rather than floating */}
@@ -105,54 +112,50 @@ export function CardBack({ color, radius = '1.1rem', followPointer = false }: { 
       ))}
 
       {/*
-        Light across the face, falling the way the card is turned.
-
-        The cards lean left, so their right-hand edge is the one swung toward
-        the viewer and their left-hand edge is the one going away. The old code
-        had this exactly backwards — a bright strip down the receding edge and a
-        black one down the approaching edge — so the shading argued with the
-        geometry, and a squeezed rectangle with contradictory lighting is
-        precisely a shape that has no readable depth. Near edge catches the
-        light, far edge falls into shade.
+        The face is flat colour. A raking gradient across it was tried, to say
+        which edge was the near one, and it read as a gradient rather than as
+        light — this is printed card, and print does not have a sheen. The
+        depth is carried by the geometry and by the paper edge below instead,
+        which is where it belongs.
       */}
-      <div
-        className="absolute inset-0 pointer-events-none"
-        style={{
-          borderRadius: radius,
-          background:
-            'linear-gradient(97deg, rgba(0,0,0,.34) 0%, rgba(0,0,0,.10) 34%, rgba(0,0,0,0) 62%, rgba(255,255,255,.16) 100%)',
-        }}
-      />
-      <div className="absolute inset-y-0 right-0 w-[2px] bg-white/55 pointer-events-none" />
       <div className="absolute inset-0 pointer-events-none" style={{ borderRadius: radius, boxShadow: 'inset 0 0 0 1px rgba(0,0,0,.22)' }} />
     </div>
   );
 }
 
-/** How thick a card is, in px. Enough to catch light, not enough to be a brick. */
-const THICK = 7;
+/**
+ * How thick a card is, in px.
+ *
+ * At 7 this was a slab: seen at 64° the edge is the one surface facing the
+ * viewer squarely, so it is magnified where the face is compressed, and a thick
+ * bright one looked like board glued to the back rather than the edge of a
+ * card. 3 is enough to exist.
+ */
+const THICK = 3;
 
 /**
  * The cut edge of the paper.
  *
  * Half of why the reference deck reads as a stack of physical objects is that
- * its cards are solids: you see the white edge of every one. A plane has no
- * thickness at any angle, so however well it is lit it stays a coloured
- * rectangle. This is a real face standing at ninety degrees to the front of the
- * card, hinged on the right-hand edge — the near one — and running backwards
- * away from the viewer, which is where the body of the card actually is.
+ * its cards are solids: you see the edge of every one. A plane has no thickness
+ * at any angle, so however well it is lit it stays a coloured rectangle. This
+ * is a real face standing at ninety degrees to the front of the card, hinged on
+ * the right-hand edge — the near one — and running backwards away from the
+ * viewer, which is where the body of the card actually is.
+ *
+ * Flat and off-white, not white and not shaded: it should read as the cut edge
+ * of a stack of paper and then be forgotten about.
  */
 function CardEdge() {
   return (
     <div
       aria-hidden
-      className="absolute top-[2%] bottom-[2%] right-0 pointer-events-none"
+      className="absolute top-[1.5%] bottom-[1.5%] right-0 pointer-events-none"
       style={{
         width: THICK,
         transformOrigin: 'right center',
         transform: 'rotateY(-90deg)',
-        background: 'linear-gradient(to right, rgba(160,148,132,.9), #f7f1e8 55%, #e6ddd0)',
-        borderRadius: '1px',
+        background: '#efe6da',
       }}
     />
   );
@@ -344,7 +347,6 @@ function CardCrate({
                 focus={focus}
                 deckColor={deckColor}
                 isCentre={i === centre}
-                depth={Math.abs(i - centre)}
                 isRising={rising === q.id}
                 dimmed={!!rising && rising !== q.id}
                 fresh={fresh}
@@ -376,8 +378,6 @@ interface CrateCardProps {
   focus: MotionValue<number>;
   deckColor: string;
   isCentre: boolean;
-  /** How many cards from the focus, for painter order. */
-  depth: number;
   isRising: boolean;
   dimmed: boolean;
   fresh: boolean;
@@ -396,7 +396,7 @@ interface CrateCardProps {
  * so the card pulled out is visibly the card that was looked at.
  */
 function CrateCard({
-  index, focus, deckColor, isCentre, depth, isRising, dimmed, fresh, marked, age,
+  index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
   // Position on the circle. The row parts a little around the cursor on top of
@@ -412,14 +412,15 @@ function CrateCard({
   // side of the one in focus — the ones you are about to move onto — were
   // already smeared. Blur now holds off until the second neighbour and tops out
   // at under 2px: enough to give the row depth, not enough to fog it.
-  // Now that the arc supplies real depth, the blur has much less work to do —
-  // it was standing in for depth cues that were not there, and at 1.8px it was
-  // fogging cards the student was about to move onto.
+  // Depth of field, stopped well down. There should be a focal plane — the row
+  // is meant to fall off — but a wide aperture blurs cards the student is about
+  // to move onto, and the arc now supplies most of the depth on its own. Three
+  // cards either side stay sharp and nothing goes past 0.6px.
   const blur = useTransform(d, (v: number) =>
-    `blur(${Math.min(Math.max(Math.abs(v) - 1.6, 0) * 0.38, 0.9)}px)`);
-  // Cards deep in the stack are almost entirely covered anyway; fading the far
-  // ones keeps the row from looking like a fan of separate objects.
-  const fade = useTransform(d, (v: number) => Math.max(1 - Math.max(Math.abs(v) - 4, 0) * 0.14, 0.5));
+    `blur(${Math.min(Math.max(Math.abs(v) - 2.6, 0) * 0.3, 0.6)}px)`);
+  // Same restraint on the fade: the far end of a ten-card row should recede,
+  // not wash out.
+  const fade = useTransform(d, (v: number) => Math.max(1 - Math.max(Math.abs(v) - 5, 0) * 0.11, 0.66));
 
   const lit = isCentre || isRising;
 
@@ -440,7 +441,25 @@ function CrateCard({
         x, z, rotateY: spin,
         transformStyle: 'preserve-3d',
         pointerEvents: 'none',
-        zIndex: isRising ? 99 : 60 - depth,
+        /*
+          Painter order runs one way across the whole row, and this is the
+          reason it has to.
+
+          Stacking by distance from the focus — highest in the middle, falling
+          away to both sides — puts the two halves in opposite orders: left of
+          centre each card covers its left-hand neighbour, right of centre each
+          card is covered by it. Every card leans the same way, so that is a
+          contradiction, and it is visible as a seam running down the middle of
+          the deck.
+
+          The order is set by the geometry, not by taste. A card's right-hand
+          edge swings about 115px toward the viewer and its left-hand edge the
+          same distance away, so where card i overlaps card i+1, card i's
+          material is the nearer of the two: the left card is in front. The only
+          exception is the card in focus, which is lifted out of the row and is
+          meant to be read as being in front of it.
+        */
+        zIndex: isRising ? 999 : isCentre ? 500 : 400 - index,
       }}
       animate={{
         // The card keeps its lean the whole way up: it is drawn straight out of
@@ -459,7 +478,12 @@ function CrateCard({
           className="absolute inset-0 rounded-[1.1rem]"
           animate={{
             opacity: dimmed ? 0.18 : fresh ? 1 : 1 - age * 0.5,
-            filter: `saturate(${fresh ? 1 : 1 - age * 0.7}) brightness(${lit ? 1.1 : 0.82})`,
+            // 1.1 against 0.82 was a third of a stop between the card in focus
+            // and its neighbours, which is enough to look like a different
+            // colour rather than the same card picked out — the exact thing
+            // that was wrong when the drawn card changed colour. Marking a card
+            // does not need to repaint it.
+            filter: `saturate(${fresh ? 1 : 1 - age * 0.7}) brightness(${lit ? 1 : 0.92})`,
             boxShadow: lit ? '0 26px 60px rgba(34,30,26,.32)' : '0 2px 6px rgba(34,30,26,.18)',
           }}
           transition={{ type: 'spring', stiffness: 260, damping: 26 }}
