@@ -54,21 +54,66 @@ function contrast(a: string, b: string): number {
 }
 
 const INK = '#221e1a';
-const GOLD = '#e5bb40';
-const CREAM = '#fcf6f0';
+
+function toHsl(hex: string): { h: number; s: number; l: number } {
+  const n = hex.replace('#', '');
+  const [r, g, b] = [0, 2, 4].map(i => parseInt(n.slice(i, i + 2), 16) / 255);
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  const l = (max + min) / 2;
+  const d = max - min;
+  if (!d) return { h: 0, s: 0, l };
+  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+  const h =
+    max === r ? ((g - b) / d + (g < b ? 6 : 0)) :
+    max === g ? ((b - r) / d + 2) :
+                ((r - g) / d + 4);
+  return { h: h * 60, s, l };
+}
+
+function toHex(h: number, s: number, l: number): string {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+  const m = l - c / 2;
+  const seg = Math.floor(((h % 360) + 360) % 360 / 60);
+  const [r, g, b] = [
+    [c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x],
+  ][seg];
+  return '#' + [r, g, b]
+    .map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0'))
+    .join('');
+}
 
 /**
- * Which colour the star prints in on a given card.
+ * Which colour the star prints in on a given card: the card's complement.
  *
- * Gold is the mark's own colour and is used wherever it reads. It does not read
- * on the gold deck, where it would be invisible, nor on the mid-toned ones like
- * terracotta and slate, where it manages barely 2:1. Those print cream instead,
- * which keeps the mark legible without pretending the card is darker or lighter
- * than it is.
+ * Hue alone is not enough, and this is the whole difficulty of the rule. Two
+ * complementary colours of the same lightness have almost no contrast against
+ * each other — a mid blue and a mid orange sit at 1.1:1 — so a star placed on
+ * its card's exact opposite would be a perfectly correct complement that nobody
+ * could see. The hue is taken from across the wheel; the lightness is then
+ * driven the other way from the card's own until the mark actually reads, and
+ * the saturation is held up so what arrives is a colour rather than a grey.
+ *
+ * 3.2:1 is the floor. This is a large solid shape, not body text, so it does
+ * not owe 4.5:1 — but it does have to survive being seen almost edge-on at the
+ * far end of the row.
  */
 function starInk(bg: string): string {
-  if (luminance(bg) > 0.33) return INK;
-  return contrast(bg, GOLD) >= 2.5 ? GOLD : CREAM;
+  const { h, s, l } = toHsl(bg);
+  const hue = (h + 180) % 360;
+  // Floored well up. The complement inherits the card's saturation, and the
+  // quieter cards — the slates, the mist blue — handed back a mark at 0.24 that
+  // had the right hue and looked like mud. A complement should be legible as a
+  // colour, not merely be one on paper.
+  const sat = Math.min(Math.max(s, 0.62), 0.85);
+  const dark = l > 0.5;                 // light card wants a dark mark
+  let lum = dark ? 0.26 : 0.78;
+  for (let i = 0; i < 14; i++) {
+    const ink = toHex(hue, sat, lum);
+    if (contrast(bg, ink) >= 3.2) return ink;
+    lum += dark ? -0.03 : 0.03;
+  }
+  return toHex(hue, sat, dark ? 0.1 : 0.95);
 }
 
 function isLight(hex: string): boolean {

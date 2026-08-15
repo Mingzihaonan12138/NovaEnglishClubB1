@@ -1959,10 +1959,21 @@ export default function App() {
                   <span className="ml-auto text-xs text-muted">{g.decks.length} 副牌</span>
                 </div>
                 <p className="text-sm text-ink-soft mb-4">{g.lede}</p>
-                {/* Both parts use the same column count so a Part 1 deck and a
-                    Part 2 deck are the same size: they are the same kind of
-                    object, and the grid should not imply otherwise. */}
-                <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-x-4 gap-y-6">
+                {/*
+                  Both parts use the same column count so a Part 1 deck and a
+                  Part 2 deck are the same size: they are the same kind of
+                  object, and the grid should not imply otherwise.
+
+                  The gap has to pay for the fan. Each stack splays about its
+                  bottom edge, and a few degrees of rotation throws the top
+                  corners well past the column the stack nominally occupies —
+                  measured at ~18px on one side and ~11px on the other. At the
+                  old gap of 16px neighbouring stacks were therefore overlapping
+                  each other, which is most of why this page looked crowded.
+                  Four to a row at 48px leaves them clear even while one is
+                  hovered and splaying further.
+                */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-12 gap-y-12">
                   {/* display:contents so the wrapper carrying the key is
                       invisible to the grid and the button stays the grid item.
                       React's `key` cannot go on DeckStack directly without

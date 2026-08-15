@@ -39,15 +39,21 @@ export default function DeckStack({
           this is a single card, and the count underneath has to do all the work
           of saying there are twenty more behind it. They lean apart a little on
           hover, which is the same gesture the crate makes.
+
+          The angles are small on purpose. Rotation here is about the bottom
+          edge, so the lever arm is the whole height of the card and every
+          degree costs about 4px of horizontal reach at the top corners — which
+          is spent outside the grid column, on the neighbouring stack. Five
+          degrees was enough to make the row collide with itself.
         */}
         <div
-          className="absolute inset-0 origin-bottom transition-transform duration-200 -rotate-[5deg] group-hover:-rotate-[8deg]"
+          className="absolute inset-0 origin-bottom transition-transform duration-200 -rotate-[4deg] group-hover:-rotate-[6deg]"
           style={{ filter: 'brightness(0.82) saturate(0.9)' }}
         >
           <CardBack color={colour} radius="0.9rem" />
         </div>
         <div
-          className="absolute inset-0 origin-bottom transition-transform duration-200 rotate-[3deg] group-hover:rotate-[5deg]"
+          className="absolute inset-0 origin-bottom transition-transform duration-200 rotate-[2.5deg] group-hover:rotate-[4deg]"
           style={{ filter: 'brightness(0.9) saturate(0.95)' }}
         >
           <CardBack color={colour} radius="0.9rem" />

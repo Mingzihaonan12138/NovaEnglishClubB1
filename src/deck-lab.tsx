@@ -29,7 +29,9 @@ const COLOURS = [
 
 createRoot(document.getElementById('root')!).render(
   <div className="min-h-screen bg-page p-10">
-    <div className="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-5 gap-x-4 gap-y-6 max-w-4xl mx-auto mb-16">
+    {/* Same grid classes as the real choosing screen, so what is measured here
+        is what the student gets. Keep the two in step. */}
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-12 gap-y-12 max-w-4xl mx-auto mb-16">
       {COLOURS.map((c, i) => (
         <div key={c} style={{ display: 'contents' }}>
           <DeckStack topic={`Deck ${i + 1}`} colour={c} total={10} fresh={i === 3 ? 0 : 10} onOpen={() => {}} />
