@@ -4,6 +4,8 @@ import type { MotionValue } from 'motion/react';
 import { Volume2, X, Mic, Square, Bookmark, Loader2, ChevronRight } from 'lucide-react';
 import { QuestionAnswer } from '../constants';
 import { stopSpeaking } from '../lib/tts';
+import { splitQuestion, questionSize } from '../lib/question';
+import { starInk, luminance } from '../lib/deckPalette';
 import { StarMascot } from './Mascot';
 
 export interface DeckCardState {
@@ -41,81 +43,9 @@ interface PracticeDeckProps {
  * coloured shape. The star is large enough to survive being seen almost
  * edge-on, and the double rule gives the eye an edge to catch at any angle.
  */
-function luminance(hex: string): number {
-  const h = hex.replace('#', '');
-  const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
-  const f = (v: number) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
-  return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
-}
-
-function contrast(a: string, b: string): number {
-  const x = luminance(a), y = luminance(b);
-  return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
-}
-
 const INK = '#221e1a';
 
-function toHsl(hex: string): { h: number; s: number; l: number } {
-  const n = hex.replace('#', '');
-  const [r, g, b] = [0, 2, 4].map(i => parseInt(n.slice(i, i + 2), 16) / 255);
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  const d = max - min;
-  if (!d) return { h: 0, s: 0, l };
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  const h =
-    max === r ? ((g - b) / d + (g < b ? 6 : 0)) :
-    max === g ? ((b - r) / d + 2) :
-                ((r - g) / d + 4);
-  return { h: h * 60, s, l };
-}
-
-function toHex(h: number, s: number, l: number): string {
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = l - c / 2;
-  const seg = Math.floor(((h % 360) + 360) % 360 / 60);
-  const [r, g, b] = [
-    [c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x],
-  ][seg];
-  return '#' + [r, g, b]
-    .map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0'))
-    .join('');
-}
-
-/**
- * Which colour the star prints in on a given card: the card's complement.
- *
- * Hue alone is not enough, and this is the whole difficulty of the rule. Two
- * complementary colours of the same lightness have almost no contrast against
- * each other — a mid blue and a mid orange sit at 1.1:1 — so a star placed on
- * its card's exact opposite would be a perfectly correct complement that nobody
- * could see. The hue is taken from across the wheel; the lightness is then
- * driven the other way from the card's own until the mark actually reads, and
- * the saturation is held up so what arrives is a colour rather than a grey.
- *
- * 3.2:1 is the floor. This is a large solid shape, not body text, so it does
- * not owe 4.5:1 — but it does have to survive being seen almost edge-on at the
- * far end of the row.
- */
-function starInk(bg: string): string {
-  const { h, s, l } = toHsl(bg);
-  const hue = (h + 180) % 360;
-  // Floored well up. The complement inherits the card's saturation, and the
-  // quieter cards — the slates, the mist blue — handed back a mark at 0.24 that
-  // had the right hue and looked like mud. A complement should be legible as a
-  // colour, not merely be one on paper.
-  const sat = Math.min(Math.max(s, 0.62), 0.85);
-  const dark = l > 0.5;                 // light card wants a dark mark
-  let lum = dark ? 0.26 : 0.78;
-  for (let i = 0; i < 14; i++) {
-    const ink = toHex(hue, sat, lum);
-    if (contrast(bg, ink) >= 3.2) return ink;
-    lum += dark ? -0.03 : 0.03;
-  }
-  return toHex(hue, sat, dark ? 0.1 : 0.95);
-}
-
+/** Light enough that the printed rules on the card must be dark, not white. */
 function isLight(hex: string): boolean {
   return luminance(hex) > 0.33;
 }
@@ -359,7 +289,20 @@ function CardCrate({
           you. Centred horizontally, that swing is symmetric and small, and the
           arc is left to supply the variation on its own.
         */
-        style={{ perspective: 2400, perspectiveOrigin: '50% 30%' }}
+        /*
+          The eye steps back as the deck gets longer, which is what you would
+          actually do. Distance is fixed only in the sense that a viewer is: a
+          sixteen-card row reaches 473px from the centre against a ten-card
+          row's 266px, and at a fixed 2400 the far end of the long one was
+          crushed to slivers a few pixels wide — the near corner of each card
+          magnified and the far corner shrunk until nothing was left between
+          them. Scaling the distance with the row keeps every card looking the
+          same as it does in a short deck.
+        */
+        style={{
+          perspective: Math.round(2400 * Math.min(Math.max(questions.length / 10, 1), 1.9)),
+          perspectiveOrigin: '50% 30%',
+        }}
       >
         {/* Something to stand on. The row was floating in an empty page, which
             is most of why it looked unfinished: a lit patch of table and a
@@ -500,11 +443,16 @@ function CrateCard({
           The order is set by the geometry, not by taste. A card's right-hand
           edge swings about 115px toward the viewer and its left-hand edge the
           same distance away, so where card i overlaps card i+1, card i's
-          material is the nearer of the two: the left card is in front. The only
-          exception is the card in focus, which is lifted out of the row and is
-          meant to be read as being in front of it.
+          material is the nearer of the two: the left card is in front.
+
+          The card in focus is no exception, and that is the point. It is still
+          in the row — raised in it, not taken out of it — so the cards in front
+          of it still cover its lower edge, exactly as they would if you pushed
+          one record up out of a crate. Floating it over its neighbours made it
+          a separate object hovering above the deck. Only the card actually
+          being drawn leaves, and that one goes clear of everything.
         */
-        zIndex: isRising ? 999 : isCentre ? 500 : 400 - index,
+        zIndex: isRising ? 999 : 400 - index,
       }}
       animate={{
         // The card keeps its lean the whole way up: it is drawn straight out of
@@ -563,6 +511,7 @@ export default function PracticeDeck({
   const historyRef = useRef<QuestionAnswer[]>([]);
 
   const state = current ? cardState[current.id] : undefined;
+  const q = useMemo(() => splitQuestion(current?.question || ''), [current]);
 
   // Whatever is being read aloud belongs to the card on screen. Leaving the
   // deck by any route — the exit button, Escape, the browser back gesture —
@@ -705,11 +654,34 @@ export default function PracticeDeck({
             className="absolute inset-0 rounded-[1.6rem] bg-card border border-line p-7 flex flex-col"
             style={{ backfaceVisibility: 'hidden', transform: 'rotateY(180deg)' }}
           >
-            <p className="text-[11px] tracking-wide text-muted mb-3">{current?.topic}</p>
-            <p className="font-display text-[1.6rem] leading-snug">{current?.question}</p>
-            {current?.chineseMeaning && (
-              <p className="text-xs text-muted mt-2">{current.chineseMeaning}</p>
-            )}
+            <p className="text-[11px] tracking-wide text-muted mb-3 shrink-0">{current?.topic}</p>
+            {/*
+              A question and its rephrasings are one question, so it is set as
+              one: the wording the examiner will use at full size, the others
+              small underneath. Printed as a single run of text — which is how
+              they arrive — three wordings ran off the bottom of the card and
+              asked a B1 student to read a paragraph before answering.
+
+              The type gives rather than the card: a card is a fixed thing, and
+              a card that grows to fit its contents is a box. The scroll below
+              is a backstop for a question longer than anything seen so far, not
+              the plan.
+            */}
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <p className="font-display leading-snug" style={{ fontSize: questionSize(q.main, q.alts.length) }}>
+                {q.main}
+              </p>
+              {q.alts.length > 0 && (
+                <div className="mt-3 pl-3 border-l-2 border-line space-y-1">
+                  <p className="text-[10px] tracking-wide text-muted">考官也可能这样问</p>
+                  {q.alts.map((a, i) => (
+                    <p key={i} className="text-xs leading-relaxed text-ink-soft">{a}</p>
+                  ))}
+                </div>
+              )}
+              {current?.chineseMeaning && (
+                <p className="text-xs text-muted mt-2">{current.chineseMeaning}</p>
+              )}
 
             <AnimatePresence>
               {showHint && state?.keywords && (
@@ -743,8 +715,11 @@ export default function PracticeDeck({
                 <p className="text-xs leading-relaxed text-ink">{state.feedback}</p>
               </div>
             )}
+            </div>
 
-            <div className="mt-auto flex items-center gap-3 text-muted">
+            {/* Pinned below the scroll, so the two controls on the card never
+                drift off the bottom of it however long the question is. */}
+            <div className="mt-3 pt-3 border-t border-line/60 shrink-0 flex items-center gap-3 text-muted">
               <button
                 onClick={(e) => { e.stopPropagation(); current && onSpeak(current); }}
                 aria-label="再听一遍"

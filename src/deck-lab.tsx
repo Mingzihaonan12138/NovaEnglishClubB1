@@ -13,7 +13,7 @@ import DeckStack from './components/DeckStack';
 import type { QuestionAnswer } from './constants';
 import './index.css';
 
-const questions: QuestionAnswer[] = Array.from({ length: 10 }, (_, i) => ({
+const questions: QuestionAnswer[] = Array.from({ length: 16 }, (_, i) => ({
   id: `q${i}`,
   topic: 'Family activities',
   question: `Question number ${i + 1} about what your family does together.`,

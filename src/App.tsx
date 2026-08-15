@@ -36,6 +36,7 @@ import PracticeDeck, { DeckCardState } from './components/PracticeDeck';
 import DeckStack from './components/DeckStack';
 import { resolveQuestions, isShowingSample } from './lib/resolveQuestions';
 import { parsePastedQuestions } from './lib/parsePaste';
+import { DECK_COLOURS } from './lib/deckPalette';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, query, getDocs, doc, updateDoc, serverTimestamp, QueryDocumentSnapshot, DocumentData, where } from 'firebase/firestore';
 
@@ -58,19 +59,12 @@ const isLocalDev =
  * These are the brand's own extended palette, ordered so that neighbouring
  * decks differ in lightness as well as hue.
  */
-const DECK_COLOURS = [
-  '#e5bb40', // gold, sampled from the logo
-  '#445da3', // indigo, sampled from the speech-bubble character
-  '#d4673a', // terracotta
-  '#88aec9', // pale blue
-  '#7a7c2e', // olive
-  '#efa0b3', // pink
-  '#6e86a8', // slate blue
-  '#c9cf92', // sage
-  '#221e1a', // ink
-  '#2c3d6e', // indigo, deepened
-  '#a8791f', // gold, deepened
-];
+/*
+  The list itself lives in src/lib/deckPalette.ts, next to the rule for what
+  colour the star prints in on each of them. Two copies of the same eleven
+  colours in two files is how a card ends up a colour its own mark was never
+  checked against.
+*/
 
 export default function App() {
   // Starts empty rather than at a constant's first entry, which was the name of
@@ -1947,12 +1941,24 @@ export default function App() {
               exam, so the module card became the recording history instead.
             */}
             {[
+              /*
+                Five and six are not arbitrary: Trinity fixes Part 1 at five
+                chosen topics and Part 2 at six subject areas, and they do not
+                change. So each part gets exactly its own number of columns and
+                fills one clean row — no last row with a single deck stranded on
+                it, which is what four-across gave (5 -> 4+1, 6 -> 4+2). Both
+                bands then run the full width of the column, flush at each end.
+                Part 2's cards come out a fifth smaller, which is honest: there
+                are more of them.
+              */
               { label: 'Part 1', tag: '你自己选的', tagClass: 'text-gold-ink bg-gold-soft',
-                lede: '考官只会问你准备过的生活。', decks: part1Decks },
+                lede: '考官只会问你准备过的生活。', decks: part1Decks,
+                cols: 'lg:grid-cols-5', gap: 'lg:gap-x-11' },
               { label: 'Part 2', tag: '考纲固定', tagClass: 'text-blue-ink bg-blue-soft',
-                lede: '所有考生题目一样，答案是你自己的。', decks: part2Decks },
+                lede: '所有考生题目一样，答案是你自己的。', decks: part2Decks,
+                cols: 'lg:grid-cols-6', gap: 'lg:gap-x-8' },
             ].filter(g => g.decks.length > 0).map(g => (
-              <div key={g.label} className="max-w-4xl mx-auto w-full">
+              <div key={g.label} className="max-w-5xl mx-auto w-full">
                 <div className="flex items-baseline gap-3 mb-1">
                   <h3 className="font-display text-lg font-semibold">{g.label}</h3>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-md ${g.tagClass}`}>{g.tag}</span>
@@ -1973,7 +1979,7 @@ export default function App() {
                   Four to a row at 48px leaves them clear even while one is
                   hovered and splaying further.
                 */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-12 gap-y-12">
+                <div className={`grid grid-cols-2 sm:grid-cols-3 ${g.cols} gap-x-10 gap-y-12 ${g.gap}`}>
                   {/* display:contents so the wrapper carrying the key is
                       invisible to the grid and the button stays the grid item.
                       React's `key` cannot go on DeckStack directly without
