@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { motion, AnimatePresence, useReducedMotion, useMotionValue, useSpring, useTransform } from 'motion/react';
+import { motion, AnimatePresence, animate, useReducedMotion, useMotionValue, useSpring, useTransform } from 'motion/react';
 import type { MotionValue } from 'motion/react';
 import { Volume2, X, Mic, Square, Bookmark, Loader2, ChevronRight } from 'lucide-react';
 import { QuestionAnswer } from '../constants';
 import { stopSpeaking } from '../lib/tts';
 import { splitQuestion, questionSize } from '../lib/question';
 import { starInk, luminance } from '../lib/deckPalette';
+import { CRATE_CARD, FLIP_CARD } from '../lib/card';
 import { StarMascot } from './Mascot';
 
 export interface DeckCardState {
@@ -50,7 +51,7 @@ function isLight(hex: string): boolean {
   return luminance(hex) > 0.33;
 }
 
-export function CardBack({ color, radius = '1.1rem', followPointer = false }: { color: string; radius?: string; followPointer?: boolean }) {
+export function CardBack({ color, radius = CRATE_CARD.radius, followPointer = false }: { color: string; radius?: string; followPointer?: boolean }) {
   // The gold deck is the same colour as the star, so a gold star on it would be
   // an invisible mark on a blank rectangle. Light cards print in ink instead.
   const light = isLight(color);
@@ -210,10 +211,29 @@ function CardCrate({
   /** The card on its way up and out; the row waits for it before switching. */
   const [rising, setRising] = useState<string | null>(null);
 
+  /**
+   * The deck arriving: 0 is the stack you clicked, 1 is the row.
+   *
+   * Choosing a deck used to be a cut. You pressed a squared-up pile of cards
+   * facing you and the next frame was a row of cards standing on their edges —
+   * nothing carried across, so the thing you pressed and the thing you got were
+   * only related by having the same colour. This is the same pile: it is still
+   * square on and stacked at 0, and every position, every angle and the whole
+   * curve is scaled by it, so raising the value spreads the pile into the arc.
+   * One number, because a fan is not several animations, it is one.
+   */
+  const spread = useMotionValue(reduce ? 1 : 0);
+
   useEffect(() => {
     const unsub = focus.on('change', v => setCentre(Math.round(v)));
     return () => unsub();
   }, [focus]);
+
+  useEffect(() => {
+    if (reduce) return;
+    const stop = animate(spread, 1, { duration: 0.62, ease: [0.22, 0.68, 0.28, 1] });
+    return () => stop.stop();
+  }, [reduce, spread]);
 
   /** Which card the strip is pointing at, straight from a screen position. */
   const indexAt = (clientX: number): number | null => {
@@ -375,6 +395,7 @@ function CardCrate({
               <CrateCard
                 index={i}
                 focus={focus}
+                spread={spread}
                 deckColor={deckColor}
                 isCentre={i === centre}
                 isRising={rising === q.id}
@@ -388,19 +409,38 @@ function CardCrate({
         })}
       </div>
 
-      <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-1 mt-2 text-xs text-muted">
-        <span className="inline-flex items-center gap-1.5">
-          <i className="w-2.5 h-3.5 rounded-[2px]" style={{ background: deckColor }} />
-          没练过
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <i className="w-2.5 h-3.5 rounded-[2px] opacity-30" style={{ background: deckColor }} />
-          练过的往后退
-        </span>
-        {/* No longer says "move the mouse". Most of these students practise on
-            a phone, where there is no mouse to move — and the instruction was
-            describing a gesture the interface did not actually require. */}
-        <span>左右滑动挑牌，点一下抽出来</span>
+      {/*
+        One line, and only until it has been used once.
+
+        There were three messages here in a row of small grey type: a colour key
+        for "not practised", a second for "the ones you have done move back", and
+        the gesture. An interface that needs a legend to be used has not finished
+        being designed, and the legend was explaining a rule — that practised
+        cards desaturate and sink — which a student will either notice on their
+        own or never need. It was costing every one of them attention to teach
+        almost none of them anything.
+
+        The gesture stays, because a row of cards on their edges genuinely does
+        not announce that it can be swiped. It goes as soon as the student draws
+        their first card, which is the moment they have proved they know.
+
+        No longer says "move the mouse" either. Most of these students practise
+        on a phone, where there is no mouse to move.
+      */}
+      <div className="h-5 mt-2 text-xs text-muted text-center">
+        <AnimatePresence>
+          {order.length === 0 && (
+            <motion.span
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.4 }}
+              className="inline-block"
+            >
+              左右滑动挑牌，点一下抽出来
+            </motion.span>
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -409,6 +449,8 @@ function CardCrate({
 interface CrateCardProps {
   index: number;
   focus: MotionValue<number>;
+  /** 0 while the deck is still a stack, 1 once it has fanned into the row. */
+  spread: MotionValue<number>;
   deckColor: string;
   isCentre: boolean;
   isRising: boolean;
@@ -429,17 +471,27 @@ interface CrateCardProps {
  * so the card pulled out is visibly the card that was looked at.
  */
 function CrateCard({
-  index, focus, deckColor, isCentre, isRising, dimmed, fresh, marked, age,
+  index, focus, spread, deckColor, isCentre, isRising, dimmed, fresh, marked, age,
 }: CrateCardProps) {
   const d = useTransform(focus, (f: number) => index - f);
+  /*
+    Everything the arc does is multiplied by `spread`, which runs 0 to 1 as the
+    deck arrives. At 0 that leaves x and z at nought and the turn at nought too:
+    a squared-up pile facing the viewer, which is exactly the stack that was
+    pressed on the shelf. At 1 it is the row. Scaling one number rather than
+    animating three properties is what keeps the fan a single movement instead
+    of three that happen to overlap.
+  */
   // Position on the circle. The row parts a little around the cursor on top of
   // that, so one card is legible among cards of a single colour — tanh rather
   // than sign, because sign flips the whole PART term the instant d crosses
   // zero, which threw a card across the centre line in one frame.
-  const x = useTransform(d, (v: number) => RADIUS * Math.sin(v * ARC * RAD) + PART * Math.tanh(v / 1.2));
-  const z = useTransform(d, (v: number) => RADIUS * (Math.cos(v * ARC * RAD) - 1));
+  const x = useTransform([d, spread], ([v, s]: number[]) =>
+    (RADIUS * Math.sin(v * ARC * RAD) + PART * Math.tanh(v / 1.2)) * s);
+  const z = useTransform([d, spread], ([v, s]: number[]) =>
+    RADIUS * (Math.cos(v * ARC * RAD) - 1) * s);
   // Tangent to the circle at that point: the card's own share of the curve.
-  const spin = useTransform(d, (v: number) => -TURN + v * ARC);
+  const spin = useTransform([d, spread], ([v, s]: number[]) => (-TURN + v * ARC) * s);
   // Distant cards go soft, because nothing says "further away" as plainly as
   // being out of focus. Softening began immediately though, so the cards either
   // side of the one in focus — the ones you are about to move onto — were
@@ -469,8 +521,12 @@ function CrateCard({
       inside, where flattening costs nothing.
     */
     <motion.div
-      className="absolute left-1/2 top-1/2 w-[16rem] h-[22rem] -ml-[8rem] -mt-[11rem]"
+      className="absolute left-1/2 top-1/2"
       style={{
+        width: CRATE_CARD.width,
+        height: CRATE_CARD.height,
+        marginLeft: -CRATE_CARD.width / 2,
+        marginTop: -CRATE_CARD.height / 2,
         x, z, rotateY: spin,
         transformStyle: 'preserve-3d',
         pointerEvents: 'none',
@@ -513,7 +569,8 @@ function CrateCard({
       <CardEdge />
       <motion.div className="absolute inset-0" style={{ filter: blur, opacity: fade }}>
         <motion.div
-          className="absolute inset-0 rounded-[1.1rem]"
+          className="absolute inset-0"
+          style={{ borderRadius: CRATE_CARD.radius }}
           animate={{
             opacity: dimmed ? 0.18 : fresh ? 1 : 1 - age * 0.5,
             // 1.1 against 0.82 was a third of a stop between the card in focus
@@ -680,21 +737,24 @@ export default function PracticeDeck({
             if (info.offset.x < -90) deal();
             else if (info.offset.x > 90) back();
           }}
-          className="w-[19rem] h-[25rem] rounded-[1.6rem] cursor-pointer"
-          style={{ transformStyle: 'preserve-3d' }}
+          className="cursor-pointer"
+          style={{
+            width: FLIP_CARD.width, height: FLIP_CARD.height,
+            borderRadius: FLIP_CARD.radius, transformStyle: 'preserve-3d',
+          }}
           animate={{ rotateY: revealed ? 180 : 0 }}
           transition={{ duration: dur, ease: [0.2, 0.7, 0.3, 1] }}
           onClick={reveal}
         >
           {/* back */}
           <div
-            className="absolute inset-0 rounded-[1.6rem] overflow-hidden"
-            style={{ backfaceVisibility: 'hidden' }}
+            className="absolute inset-0 overflow-hidden"
+            style={{ backfaceVisibility: 'hidden', borderRadius: FLIP_CARD.radius }}
           >
             {/* Same printed back as the cards in the row. Face-down is the one
                 moment with nothing to read, so the star watches the pointer
                 while you decide. */}
-            <CardBack color={deckColor} radius="1.6rem" followPointer />
+            <CardBack color={deckColor} radius={FLIP_CARD.radius} followPointer />
           </div>
 
           {/* front */}
@@ -716,8 +776,9 @@ export default function PracticeDeck({
             on it.
           */}
           <div
-            className="absolute inset-0 rounded-[1.6rem] bg-card overflow-hidden flex flex-col"
+            className="absolute inset-0 bg-card overflow-hidden flex flex-col"
             style={{
+              borderRadius: FLIP_CARD.radius,
               backfaceVisibility: 'hidden',
               transform: 'rotateY(180deg)',
               border: `1px solid ${deckColor}`,

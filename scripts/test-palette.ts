@@ -1,19 +1,20 @@
 /**
- * The two rules asked for: no deck repeats another deck's colour, and no star
- * repeats another star's colour.
+ * The mark is one mark, in one of two inks.
  *
- * Worth pinning because the second one very nearly has no solution. Six of the
- * eleven brand colours sit between 0.19 and 0.24 relative luminance, and if the
- * stars have to be flat brand colours too then terracotta, olive, slate and
- * ochre can only take the near black or the cream — four decks, two inks — so
- * by Hall's theorem there is no assignment at any useful contrast. It works
- * only because the stars are tints and shades of those hues rather than the
- * hues themselves, and it came apart once already when the blue and the navy,
- * one degree of hue apart, produced byte-identical shades.
+ * This test used to assert the opposite — that all eleven stars were different
+ * colours. That rule was satisfiable and was satisfied, at 4.02:1, and it still
+ * failed: four of the eleven came out dark navies a few points apart and three
+ * came out creams, so the page read as four colours scattered at random, with
+ * the near-misses looking like errors. It is recorded here because the arithmetic
+ * passing is exactly why it survived as long as it did.
+ *
+ * What is pinned now is that no deck repeats another deck's colour, that the
+ * mark takes one of exactly two inks, and that a single ink is genuinely
+ * impossible rather than merely unfashionable.
  *
  * Run with: npm test
  */
-import { DECK_COLOURS, starForIndex, starInk, contrast, PALETTE_ROTATION } from '../src/lib/deckPalette';
+import { DECK_COLOURS, INK, CREAM, starInk, contrast, luminance } from '../src/lib/deckPalette';
 
 let failures = 0;
 let checks = 0;
@@ -26,41 +27,39 @@ function check(name: string, pass: boolean, detail = '') {
 
 function group(title: string, fn: () => void) { console.log(`\n${title}`); fn(); }
 
-const stars = DECK_COLOURS.map((_, i) => starForIndex(i));
+const inks = DECK_COLOURS.map(starInk);
+const ratios = DECK_COLOURS.map(c => contrast(c, starInk(c)));
 
-group('Nothing repeats', () => {
-  check('eleven decks, eleven colours',
-    new Set(DECK_COLOURS).size === DECK_COLOURS.length,
-    `${new Set(DECK_COLOURS).size} distinct of ${DECK_COLOURS.length}`);
-  check('eleven stars, eleven colours',
-    new Set(stars).size === stars.length,
-    `${new Set(stars).size} distinct of ${stars.length}: ${JSON.stringify(stars)}`);
-  check('no star is the colour of the card it sits on',
-    DECK_COLOURS.every((c, i) => stars[i].toLowerCase() !== c.toLowerCase()));
-  check('no star is any deck colour verbatim — they are steps of one, not one',
-    stars.every(s => !DECK_COLOURS.includes(s.toLowerCase())),
-    JSON.stringify(stars.filter(s => DECK_COLOURS.includes(s.toLowerCase()))));
+group('One mark, two inks', () => {
+  check('the decks themselves are all different',
+    new Set(DECK_COLOURS).size === DECK_COLOURS.length);
+  check('exactly two inks are ever used',
+    new Set(inks).size === 2, `${new Set(inks).size}: ${JSON.stringify([...new Set(inks)])}`);
+  check('and they are the ink and the cream',
+    new Set(inks).has(INK) && new Set(inks).has(CREAM));
+  check('dark ink goes on light stock and light ink on dark stock',
+    DECK_COLOURS.every(c => (starInk(c) === INK) === (luminance(c) > 0.2)));
 });
 
-group('Every star can actually be seen', () => {
-  const ratios = DECK_COLOURS.map((c, i) => contrast(c, stars[i]));
+group('Every star can be seen', () => {
   const worst = Math.min(...ratios);
-  check('all above 3.5:1', worst >= 3.5, `worst ${worst.toFixed(2)}:1`);
-  check('better than the complementary rule it replaced (3.34:1)', worst > 3.34,
+  check('all above 4:1', worst >= 4, `worst ${worst.toFixed(2)}:1`);
+  check('better than the eleven-colour rule it replaced (4.02:1)', worst > 4.02,
     `worst ${worst.toFixed(2)}:1`);
   DECK_COLOURS.forEach((c, i) => {
-    check(`  ${c} -> ${stars[i]}  ${ratios[i].toFixed(2)}:1`, ratios[i] >= 3.5);
+    check(`  ${c} -> ${inks[i]}  ${ratios[i].toFixed(2)}:1`, ratios[i] >= 4);
   });
 });
 
-group('The lookup and the index agree', () => {
-  check('starInk(colour) matches starForIndex(position)',
-    DECK_COLOURS.every((c, i) => starInk(c) === starForIndex(i)));
-  check('a colour from outside the palette still gets a readable mark',
-    contrast('#ff00ff', starInk('#ff00ff')) >= 3);
-  check('the rotation is a real rotation, not zero',
-    PALETTE_ROTATION > 0 && PALETTE_ROTATION < DECK_COLOURS.length,
-    String(PALETTE_ROTATION));
+group('One ink alone is impossible, not merely unwanted', () => {
+  const single = (ink: string) => Math.min(...DECK_COLOURS.map(c => contrast(c, ink)));
+  check('the ink alone fails — it is invisible on the near-black deck',
+    single(INK) < 1.05, `${single(INK).toFixed(2)}:1`);
+  check('the cream alone fails on the pale decks',
+    single(CREAM) < 2, `${single(CREAM).toFixed(2)}:1`);
+  check('the brand gold alone fails on eight of eleven',
+    DECK_COLOURS.filter(c => contrast(c, '#e5bb40') < 2.5).length === 8,
+    String(DECK_COLOURS.filter(c => contrast(c, '#e5bb40') < 2.5).length));
 });
 
 console.log(`\n${checks - failures}/${checks} passed`);

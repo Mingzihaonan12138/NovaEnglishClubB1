@@ -1,23 +1,28 @@
 /**
- * The deck colours, and the colour the star prints in on each of them.
+ * The deck colours, and the ink the star prints in on each of them.
  *
- * Two rules were asked for: no deck repeats another deck's colour, and no star
- * repeats another star's colour. The first is free — there are eleven decks and
- * eleven colours, so position decides it.
+ * The star is the mark, so it is the same mark on every deck. It got there the
+ * long way round. First it was the complement of its card, which is a real rule
+ * and looked like mud: a light card's complement has to go dark to be seen at
+ * all, and the dark side of orange is brown. Then it was a step of another
+ * deck's hue, one per deck, so that no two stars repeated — which worked on
+ * paper, eleven distinct values and 4.02:1 at worst, and failed in front of the
+ * eye. Four of the eleven were dark navies within a few points of each other
+ * and three were creams. The page read as four colours scattered at random, and
+ * the small differences looked like mistakes rather than like a system. A rule
+ * nobody can perceive is not a rule, it is noise.
  *
- * The second has no solution if the stars must also be flat brand colours.
- * Six of the eleven sit between 0.19 and 0.24 relative luminance, and the only
- * palette entries far enough from that band to read against them are the near
- * black and the cream. Terracotta, olive, slate and ochre have those two and
- * nothing else — four decks competing for two inks — so by Hall's theorem no
- * assignment exists, at any contrast threshold worth having. Tried and
- * measured, not assumed.
+ * It is also the wrong job for a mark. Which deck this is gets said by the
+ * colour of the card and by the name printed under it; the star saying it a
+ * third time buys nothing and costs the mascot its identity. Eleven coloured
+ * mascots are eleven mascots.
  *
- * What the palette was missing is a light and a dark step of each hue, which is
- * what a palette normally has. So the star on a deck is a tint or a shade of
- * *another* deck's hue: same eleven colours, two more values each. Which hue is
- * a fixed rotation, so every star has a different one and none matches the card
- * it sits on. The rotation is chosen below by measuring, not by taste.
+ * So: one mark, two inks, chosen the way a printer chooses them — dark ink on
+ * light stock, light ink on dark stock. A single flat colour cannot work, and
+ * that is arithmetic rather than preference: the near-black deck against the
+ * ink is 1.00:1, and gold, the mark's own colour, falls below 2.5:1 on eight of
+ * the eleven. Two values clear 4.12:1 at worst, which is better than either
+ * rule they replace.
  */
 
 /** The eleven, in the order decks are handed them. */
@@ -35,6 +40,9 @@ export const DECK_COLOURS = [
   '#a8791f', // ochre
 ];
 
+export const INK = '#221e1a';
+export const CREAM = '#fcf6f0';
+
 export function luminance(hex: string): number {
   const h = hex.replace('#', '');
   const [r, g, b] = [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16) / 255);
@@ -47,103 +55,18 @@ export function contrast(a: string, b: string): number {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
-function toHsl(hex: string): { h: number; s: number; l: number } {
-  const n = hex.replace('#', '');
-  const [r, g, b] = [0, 2, 4].map(i => parseInt(n.slice(i, i + 2), 16) / 255);
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  const l = (max + min) / 2, d = max - min;
-  if (!d) return { h: 0, s: 0, l };
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  const h =
-    max === r ? ((g - b) / d + (g < b ? 6 : 0)) :
-    max === g ? ((b - r) / d + 2) : ((r - g) / d + 4);
-  return { h: h * 60, s, l };
-}
-
-function toHex(h: number, s: number, l: number): string {
-  const c = (1 - Math.abs(2 * l - 1)) * s;
-  const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-  const m = l - c / 2;
-  const seg = Math.floor((((h % 360) + 360) % 360) / 60);
-  const [r, g, b] = [[c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x]][seg];
-  return '#' + [r, g, b].map(v => Math.round((v + m) * 255).toString(16).padStart(2, '0')).join('');
-}
-
 /**
- * The dark and light steps of a brand hue.
+ * Where the stock stops being light.
  *
- * The near black is all but colourless, and a tint of a colourless thing is a
- * grey, so saturation is floored — a step of our ochre should still look like
- * ochre. The two lightnesses are pushed far apart because the mid-toned cards
- * are the hard ones: olive sits at 0.188 relative luminance, almost exactly
- * halfway, and only clears 3.7:1 against either step once they are this far out.
+ * Not 0.5. Relative luminance is not perceptual lightness, and the awkward
+ * decks — olive at 0.188, ochre at 0.221, slate at 0.232 — all sit under a
+ * quarter while looking like mid-tones. 0.2 is the point at which the two inks
+ * are equally good, and it puts olive on cream at 4.12:1, the worst pair there
+ * is.
  */
-/**
- * The step's lightness also walks a little with which colour it came from.
- *
- * Without that the blue and the navy — 224° and 225° apart from each other by
- * one degree — produced byte-identical shades, and two decks ended up with the
- * same star after all. Each hue is used by exactly one deck, so keying the
- * lightness to it guarantees eleven distinct values, and the spread is small
- * enough that they all still read as the same dark or the same light.
- */
-const shade = (hex: string, k: number) => {
-  const { h, s } = toHsl(hex);
-  return toHex(h, Math.max(s, 0.5), 0.10 + 0.04 * k);
-};
-const tint = (hex: string, k: number) => {
-  const { h, s } = toHsl(hex);
-  return toHex(h, Math.max(s, 0.45), 0.93 - 0.05 * k);
-};
+const LIGHT_STOCK = 0.2;
 
-/** Mid grey. Above it a card wants a dark mark, below it a light one. */
-const PIVOT = 0.2;
-
-function starForRotation(i: number, rotation: number): string {
-  const card = DECK_COLOURS[i];
-  const from = (i + rotation) % DECK_COLOURS.length;
-  const source = DECK_COLOURS[from];
-  const k = from / (DECK_COLOURS.length - 1);
-  return luminance(card) >= PIVOT ? shade(source, k) : tint(source, k);
-}
-
-/**
- * Which rotation to use.
- *
- * Any non-zero rotation gives every star a different hue from every other and
- * from its own card — that part is arithmetic. Which one to take is a question
- * about contrast, so it is measured: the rotation whose worst card-to-star pair
- * is the best of the ten. Computed once at load; eleven colours is nothing.
- */
-const ROTATION = (() => {
-  let best = 1, bestWorst = -1;
-  for (let r = 1; r < DECK_COLOURS.length; r++) {
-    let worst = Infinity;
-    for (let i = 0; i < DECK_COLOURS.length; i++) {
-      worst = Math.min(worst, contrast(DECK_COLOURS[i], starForRotation(i, r)));
-    }
-    if (worst > bestWorst) { bestWorst = worst; best = r; }
-  }
-  return best;
-})();
-
-/** The star colour for the deck in position i. */
-export function starForIndex(i: number): string {
-  return starForRotation(((i % DECK_COLOURS.length) + DECK_COLOURS.length) % DECK_COLOURS.length, ROTATION);
-}
-
-/**
- * The star colour for a card of this colour.
- *
- * Kept as a lookup so callers that only have the colour to hand — the card back
- * does not know its own position in the grid — get the same answer. A colour
- * from outside the palette falls back to whichever step reads on it.
- */
+/** The ink the mark prints in on a card of this colour. */
 export function starInk(cardHex: string): string {
-  const i = DECK_COLOURS.indexOf(cardHex.toLowerCase());
-  if (i >= 0) return starForIndex(i);
-  return luminance(cardHex) >= PIVOT ? '#221e1a' : '#fcf6f0';
+  return luminance(cardHex) > LIGHT_STOCK ? INK : CREAM;
 }
-
-/** For tests and for looking at. */
-export const PALETTE_ROTATION = ROTATION;
